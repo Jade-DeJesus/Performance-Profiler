@@ -1,0 +1,653 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hybrid Interpolation-Based Searching Performance Profiler</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="./css/main.css">
+    <link rel="stylesheet" href="./css/components.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@sgratzl/chartjs-chart-boxplot@4.4.4/build/index.umd.min.js"></script>
+</head>
+
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="app-header">
+            <div class="logo-icon">
+                <i class="fa-solid fa-chart-line"></i>
+            </div>
+            <div class="header-text">
+                <h1>Hybrid Interpolation-Based Searching Performance Profiler</h1>
+                <p>Import datasets, execute benchmarks, and analyze performance metrics</p>
+            </div>
+        </header>
+
+        <!-- Main Content Wrapper -->
+        <main class="main-content">
+            <!-- Stepper -->
+            <div class="stepper-container">
+                <div class="step active" id="step1-indicator" onclick="goToStep(1)">
+                    <div class="step-circle">1</div>
+                    <span class="step-label">Import Dataset</span>
+                </div>
+                <div class="step-line"></div>
+                <div class="step" id="step2-indicator">
+                    <div class="step-circle">2</div>
+                    <span class="step-label">Run Benchmarks</span>
+                </div>
+                <div class="step-line"></div>
+                <div class="step" id="step3-indicator">
+                    <div class="step-circle">3</div>
+                    <span class="step-label">View Results</span>
+                </div>
+            </div>
+
+            <!-- Tab 1: Import Dataset -->
+            <section id="tab-import" class="tab-pane active">
+
+                <div class="card dataset-instructions-card info-card-blue">
+                    <div class="card-header">
+                        <i class="fa-solid fa-circle-info"></i>
+                        <h2>Dataset Instructions</h2>
+                    </div>
+                    <div class="card-body">
+                        <p>This system evaluates the performance of search algorithms using an e-commerce dataset.</p>
+                        <p>You can either:</p>
+                        <ul>
+                            <li>Upload your own dataset (CSV or JSON)</li>
+                            <li>Generate a sample dataset automatically</li>
+                        </ul>
+                        <p>Each dataset record should contain the following fields: <strong>SKU, Name, Category, Price,
+                                Stock</strong></p>
+                        <p>Recommended dataset sizes:</p>
+                        <ul>
+                            <li><strong>1,000 records</strong> (small test)</li>
+                            <li><strong>10,000 records</strong> (medium test)</li>
+                            <li><strong>100,000 records</strong> (large test)</li>
+                            <li><strong>1,000,000 records</strong> (stress test)</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <i class="fa-solid fa-database"></i>
+                        <div>
+                            <h2>Import E-commerce Dataset</h2>
+                            <p class="subtitle">Upload your dataset file (JSON or CSV format) or generate sample data
+                            </p>
+                        </div>
+                    </div>
+                    <div class="upload-area">
+                        <i class="fa-solid fa-arrow-up-from-bracket upload-icon"></i>
+                        <h3>Click to upload or drag and drop</h3>
+                        <p>Supports JSON and CSV files</p>
+                        <input type="file" id="file-upload" class="hidden-input" accept=".json,.csv">
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <i class="fa-solid fa-table-list"></i>
+                        <div>
+                            <h2>Generate Sample Data</h2>
+                            <p class="subtitle">Quickly generate synthetic e-commerce data for testing</p>
+                        </div>
+                    </div>
+                    <div class="generate-buttons-grid">
+                        <button class="gen-btn" onclick="generateData(1000)">
+                            <span class="gen-val">1K</span>
+                            <span class="gen-lbl">Records</span>
+                        </button>
+                        <button class="gen-btn" onclick="generateData(10000)">
+                            <span class="gen-val">10K</span>
+                            <span class="gen-lbl">Records</span>
+                        </button>
+                        <button class="gen-btn" onclick="generateData(100000)">
+                            <span class="gen-val">100K</span>
+                            <span class="gen-lbl">Records</span>
+                        </button>
+                        <button class="gen-btn" onclick="generateData(1000000)">
+                            <span class="gen-val">1M</span>
+                            <span class="gen-lbl">Records</span>
+                        </button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Tab 2: Run Benchmarks -->
+            <section id="tab-benchmark" class="tab-pane">
+                <div class="card">
+                    <div class="card-header">
+                        <i class="fa-solid fa-bolt"></i>
+                        <div>
+                            <h2>Execute Performance Benchmark</h2>
+                            <p class="subtitle">Run comprehensive tests to measure search operations
+                            </p>
+                        </div>
+                    </div>
+
+                    <div class="dataset-loaded-panel">
+                        <div class="loaded-info">
+                            <i class="fa-solid fa-database text-blue"></i>
+                            <div>
+                                <p class="label">Dataset Loaded</p>
+                                <h3 class="value text-blue" id="loaded-records">1,000,000</h3>
+                                <p class="sub-label">Total Records</p>
+                            </div>
+                        </div>
+                        <div class="loaded-actions">
+                            <button class="btn btn-outline" id="view-dataset-btn" onclick="viewDataset()"
+                                style="margin-right: 10px;">
+                                <i class="fa-solid fa-eye"></i> View Dataset
+                            </button>
+                            <button id="start-benchmark-btn" class="btn btn-dark" onclick="startBenchmark()">
+                                <i class="fa-solid fa-play"></i> Start Benchmark
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="config-panel">
+                        <div class="config-row">
+                            <div class="config-group" style="flex: 1;">
+                                <label><i class="fa-solid fa-magnifying-glass"></i> Dataset Search Query</label>
+                                <span class="input-label">Type characters to search in the dataset</span>
+                                <input type="text" id="search-term" class="form-input" placeholder="e.g. SKU-10005, Electronics, Product 1">
+                                <span class="input-help" id="search-term-help">Searches SKU, name, category, etc. (case-insensitive)</span>
+                            </div>
+                            <div class="config-group" style="flex: 1;">
+                                <label><i class="fa-solid fa-calculator"></i> Search Operations</label>
+                                <span class="input-label">Number of Search Operations</span>
+                                <input type="number" id="search-ops" class="form-input" value="1000">
+                                <span class="input-help" id="max-search-help">Max: 1,000,000</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="info-alert info-card-yellow">
+                        <h4><i class="fa-solid fa-circle-exclamation"></i> Benchmark Information</h4>
+                        <ul>
+                            <li><strong>Search Test:</strong> Performs random SKU lookups to measure search performance
+                            </li>
+                            <li>All operations are performed in-memory to ensure accurate timing measurements</li>
+                            <li><strong>Algorithms Benchmarked:</strong> Automatically runs all three Interpolation
+                                variants (Binary, Fibonacci, Exponential).</li>
+                        </ul>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Tab 3: View Results -->
+            <section id="tab-results" class="tab-pane">
+                <div class="results-actions-bar" style="display: flex; gap: 0.75rem; align-items: center; justify-content: space-between; flex-wrap: wrap;">
+                    <button class="btn btn-outline" onclick="goToStep(2)">
+                        <i class="fa-solid fa-arrow-left"></i> Run Another Benchmark
+                    </button>
+                    <button id="btn-show-visualizer" class="btn btn-dark" onclick="toggleVisualizer()">
+                        <i class="fa-solid fa-wand-magic-sparkles"></i> Show Algorithm Visualizer
+                    </button>
+                </div>
+
+                <!-- Integrated Algorithm Visualizer Panel (Collapsible) -->
+                <div id="algorithm-visualizer-panel" class="visualizer-panel" style="display: none;">
+                    <div class="visualizer-header">
+                        <div class="visualizer-title-group">
+                            <h3><i class="fa-solid fa-wand-magic-sparkles text-blue"></i> Synchronized Algorithm Visualizer</h3>
+                            <p>Real-time frame-accurate multi-track comparison across all 3 interpolation search variants</p>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;">
+                            <div class="visualizer-target-box">
+                                <label for="visualizer-target-select"><i class="fa-solid fa-crosshairs"></i> Target Key:</label>
+                                <select id="visualizer-target-select" title="Select target benchmark key to visualize">
+                                    <option>Loading targets...</option>
+                                </select>
+                            </div>
+                            <div class="visualizer-target-box">
+                                <label for="visualizer-algo-select"><i class="fa-solid fa-code-compare"></i> Algorithm Variant:</label>
+                                <select id="visualizer-algo-select" title="Select hybrid algorithm variant or comparison view" onchange="onAlgoVariantChange(this.value)">
+                                    <option value="all" selected>All 3 Variants (Comparative View)</option>
+                                    <optgroup label="Pairwise Comparisons">
+                                        <option value="interp-binary,interp-fibonacci">Interpolation-Binary vs Interpolation-Fibonacci</option>
+                                        <option value="interp-binary,interp-exponential">Interpolation-Binary vs Interpolation-Exponential</option>
+                                        <option value="interp-fibonacci,interp-exponential">Interpolation-Fibonacci vs Interpolation-Exponential</option>
+                                    </optgroup>
+                                    <optgroup label="Single Algorithm View">
+                                        <option value="interp-binary">Interpolation-Binary Only</option>
+                                        <option value="interp-fibonacci">Interpolation-Fibonacci Only</option>
+                                        <option value="interp-exponential">Interpolation-Exponential Only</option>
+                                    </optgroup>
+                                </select>
+                            </div>
+                            <button class="btn btn-outline" style="padding: 0.35rem 0.75rem;" onclick="closeVisualizer()" title="Close Visualizer">
+                                <i class="fa-solid fa-xmark"></i> Close
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Synchronized Playback Controls Toolbar -->
+                    <div class="visualizer-toolbar">
+                        <div class="viz-btn-group">
+                            <button class="viz-ctrl-btn" onclick="resetVisualizer()" title="Reset to Beginning (⏮)"><i class="fa-solid fa-backward-step"></i></button>
+                            <button class="viz-ctrl-btn" onclick="stepBackward()" title="Step Backward (⏪)"><i class="fa-solid fa-step-backward"></i></button>
+                            <button id="viz-btn-play" class="viz-ctrl-btn primary" onclick="togglePlayPause()" title="Play / Pause (Space)"><i class="fa-solid fa-play"></i></button>
+                            <button class="viz-ctrl-btn" onclick="stepForward()" title="Step Forward (⏩)"><i class="fa-solid fa-step-forward"></i></button>
+                        </div>
+
+                        <div class="viz-speed-group">
+                            <button class="viz-speed-btn" data-speed="0.5" onclick="setVisualizerSpeed(0.5)">0.5x</button>
+                            <button class="viz-speed-btn active" data-speed="1.0" onclick="setVisualizerSpeed(1.0)">1.0x</button>
+                            <button class="viz-speed-btn" data-speed="2.0" onclick="setVisualizerSpeed(2.0)">2.0x</button>
+                        </div>
+
+                        <div class="viz-timeline-container">
+                            <span id="visualizer-step-indicator" class="viz-step-label">Step 1 of 1</span>
+                            <input type="range" id="visualizer-timeline-scrubber" class="viz-timeline-slider" min="0" max="0" value="0" oninput="seekVisualizerStep(this.value)">
+                            <span id="visualizer-status-badge" class="badge badge-neutral"><i class="fa-solid fa-pause"></i> Paused</span>
+                        </div>
+                    </div>
+
+                    <!-- 3-Track Grid View -->
+                    <div class="visualizer-tracks-grid grid-cols-3">
+                        <!-- Track 1: Interpolation-Binary -->
+                        <div id="track-interp-binary" class="visualizer-track">
+                            <div class="track-header">
+                                <span class="track-title" style="color: #2563eb;">
+                                    <i class="fa-solid fa-diagram-project"></i> Interpolation-Binary
+                                </span>
+                                <span class="badge track-phase-badge">Interpolation Probe</span>
+                            </div>
+
+                            <!-- Interactive Array & Pointer Track -->
+                            <div class="viz-range-wrapper">
+                                <div class="viz-pointers-layer">
+                                    <span class="viz-ptr-badge viz-ptr-low">L: 0</span>
+                                    <span class="viz-ptr-badge viz-ptr-probe">P: -</span>
+                                    <span class="viz-ptr-badge viz-ptr-high">H: N-1</span>
+                                </div>
+                                <div class="viz-range-track">
+                                    <div class="viz-eliminated-left"></div>
+                                    <div class="viz-range-highlight"></div>
+                                    <div class="viz-eliminated-right"></div>
+                                    <div class="viz-target-pin" title="Target Key Location"><span class="target-pin-label">T</span></div>
+                                    <div class="viz-probe-needle" title="Current Probed Index"></div>
+                                </div>
+                                <div class="viz-range-labels">
+                                    <span>Index 0</span>
+                                    <span style="color: #ef4444;"><i class="fa-solid fa-bullseye"></i> Target</span>
+                                    <span>N - 1</span>
+                                </div>
+                            </div>
+
+                            <!-- Calculation Formula Box -->
+                            <div class="track-formula-box">
+                                <div class="formula-header"><i class="fa-solid fa-calculator"></i> <span class="formula-type">Formula Calculation</span></div>
+                                <div class="formula-code metric-formula-code">-</div>
+                            </div>
+
+                            <!-- Step Narrative Log -->
+                            <div class="track-action-box metric-action-text">
+                                Initializing search state...
+                            </div>
+
+                            <!-- Live Telemetry Rows -->
+                            <div class="track-metrics-list">
+                                <div class="track-metric-row">
+                                    <span class="metric-label">Probe Point</span>
+                                    <span class="metric-value metric-probe-val">-</span>
+                                </div>
+                                <div class="track-metric-row">
+                                    <span class="metric-label">Active Range [L...H]</span>
+                                    <span class="metric-value metric-range-val">-</span>
+                                </div>
+                                <div class="track-metric-row">
+                                    <span class="metric-label">Search Space</span>
+                                    <span class="metric-value metric-space-val">-</span>
+                                </div>
+                                <div class="track-metric-row">
+                                    <span class="metric-label">Error Margin</span>
+                                    <span class="metric-value metric-error-val">-</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Track 2: Interpolation-Fibonacci -->
+                        <div id="track-interp-fibonacci" class="visualizer-track">
+                            <div class="track-header">
+                                <span class="track-title" style="color: #10b981;">
+                                    <i class="fa-solid fa-leaf"></i> Interpolation-Fibonacci
+                                </span>
+                                <span class="badge track-phase-badge">Interpolation Probe</span>
+                            </div>
+
+                            <!-- Interactive Array & Pointer Track -->
+                            <div class="viz-range-wrapper">
+                                <div class="viz-pointers-layer">
+                                    <span class="viz-ptr-badge viz-ptr-low">L: 0</span>
+                                    <span class="viz-ptr-badge viz-ptr-probe">P: -</span>
+                                    <span class="viz-ptr-badge viz-ptr-high">H: N-1</span>
+                                </div>
+                                <div class="viz-range-track">
+                                    <div class="viz-eliminated-left"></div>
+                                    <div class="viz-range-highlight"></div>
+                                    <div class="viz-eliminated-right"></div>
+                                    <div class="viz-target-pin" title="Target Key Location"><span class="target-pin-label">T</span></div>
+                                    <div class="viz-probe-needle" title="Current Probed Index"></div>
+                                </div>
+                                <div class="viz-range-labels">
+                                    <span>Index 0</span>
+                                    <span style="color: #ef4444;"><i class="fa-solid fa-bullseye"></i> Target</span>
+                                    <span>N - 1</span>
+                                </div>
+                            </div>
+
+                            <!-- Calculation Formula Box -->
+                            <div class="track-formula-box">
+                                <div class="formula-header"><i class="fa-solid fa-calculator"></i> <span class="formula-type">Formula Calculation</span></div>
+                                <div class="formula-code metric-formula-code">-</div>
+                            </div>
+
+                            <!-- Step Narrative Log -->
+                            <div class="track-action-box metric-action-text">
+                                Initializing search state...
+                            </div>
+
+                            <!-- Live Telemetry Rows -->
+                            <div class="track-metrics-list">
+                                <div class="track-metric-row">
+                                    <span class="metric-label">Probe Point</span>
+                                    <span class="metric-value metric-probe-val">-</span>
+                                </div>
+                                <div class="track-metric-row">
+                                    <span class="metric-label">Active Range [L...H]</span>
+                                    <span class="metric-value metric-range-val">-</span>
+                                </div>
+                                <div class="track-metric-row">
+                                    <span class="metric-label">Search Space</span>
+                                    <span class="metric-value metric-space-val">-</span>
+                                </div>
+                                <div class="track-metric-row">
+                                    <span class="metric-label">Error Margin</span>
+                                    <span class="metric-value metric-error-val">-</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Track 3: Interpolation-Exponential -->
+                        <div id="track-interp-exponential" class="visualizer-track">
+                            <div class="track-header">
+                                <span class="track-title" style="color: #f59e0b;">
+                                    <i class="fa-solid fa-chart-line"></i> Interpolation-Exponential
+                                </span>
+                                <span class="badge track-phase-badge">Interpolation Probe</span>
+                            </div>
+
+                            <!-- Interactive Array & Pointer Track -->
+                            <div class="viz-range-wrapper">
+                                <div class="viz-pointers-layer">
+                                    <span class="viz-ptr-badge viz-ptr-low">L: 0</span>
+                                    <span class="viz-ptr-badge viz-ptr-probe">P: -</span>
+                                    <span class="viz-ptr-badge viz-ptr-high">H: N-1</span>
+                                </div>
+                                <div class="viz-range-track">
+                                    <div class="viz-eliminated-left"></div>
+                                    <div class="viz-range-highlight"></div>
+                                    <div class="viz-eliminated-right"></div>
+                                    <div class="viz-target-pin" title="Target Key Location"><span class="target-pin-label">T</span></div>
+                                    <div class="viz-probe-needle" title="Current Probed Index"></div>
+                                </div>
+                                <div class="viz-range-labels">
+                                    <span>Index 0</span>
+                                    <span style="color: #ef4444;"><i class="fa-solid fa-bullseye"></i> Target</span>
+                                    <span>N - 1</span>
+                                </div>
+                            </div>
+
+                            <!-- Calculation Formula Box -->
+                            <div class="track-formula-box">
+                                <div class="formula-header"><i class="fa-solid fa-calculator"></i> <span class="formula-type">Formula Calculation</span></div>
+                                <div class="formula-code metric-formula-code">-</div>
+                            </div>
+
+                            <!-- Step Narrative Log -->
+                            <div class="track-action-box metric-action-text">
+                                Initializing search state...
+                            </div>
+
+                            <!-- Live Telemetry Rows -->
+                            <div class="track-metrics-list">
+                                <div class="track-metric-row">
+                                    <span class="metric-label">Probe Point</span>
+                                    <span class="metric-value metric-probe-val">-</span>
+                                </div>
+                                <div class="track-metric-row">
+                                    <span class="metric-label">Active Range [L...H]</span>
+                                    <span class="metric-value metric-range-val">-</span>
+                                </div>
+                                <div class="track-metric-row">
+                                    <span class="metric-label">Search Space</span>
+                                    <span class="metric-value metric-space-val">-</span>
+                                </div>
+                                <div class="track-metric-row">
+                                    <span class="metric-label">Error Margin</span>
+                                    <span class="metric-value metric-error-val">-</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Real-Time Comparative Telemetry Matrix -->
+                    <div class="visualizer-comparative-card">
+                        <div class="comparative-card-header">
+                            <i class="fa-solid fa-chart-simple text-blue"></i>
+                            <span>Synchronized Comparative Telemetry</span>
+                        </div>
+                        <div class="table-responsive" style="overflow-x: auto;">
+                            <table class="viz-comparative-table">
+                                <thead>
+                                    <tr>
+                                        <th>Algorithm</th>
+                                        <th>Status / Phase</th>
+                                        <th>Step Progress</th>
+                                        <th>Search Space Left</th>
+                                        <th>Reduction (%)</th>
+                                        <th>Error Margin</th>
+                                        <th>Cumulative Latency</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="visualizer-comparative-tbody">
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="results-kpi-grid">
+                    <div class="kpi-card">
+                        <span class="kpi-label">Total Execution Time</span>
+                        <div class="kpi-value"><span id="kpi-total-time">461,200,000.048</span> <span
+                                class="unit">ns</span></div>
+                    </div>
+                    <div class="kpi-card">
+                        <span class="kpi-label">Average Time</span>
+                        <div class="kpi-value"><span id="kpi-avg-time">533,333.361</span> <span class="unit">ns</span>
+                        </div>
+                    </div>
+                    <div class="kpi-card success">
+                        <span class="kpi-label"><i class="fa-regular fa-circle-check"></i> Fastest Search</span>
+                        <div class="kpi-value"><span class="badge badge-success" id="kpi-fastest-badge">SEARCH</span>
+                            <span id="kpi-fastest-time">100,000.024ns</span></div>
+                    </div>
+                </div>
+
+                <div class="impl-banner" style="display: flex; flex-direction: column; gap: 0.5rem; padding: 1.25rem;">
+                    <div>
+                        <strong>Algorithms Benchmarked:</strong> <span id="result-impl-used">All Interpolation Variants</span>
+                    </div>
+                    <div style="border-top: 1px solid rgba(0,0,0,0.05); padding-top: 0.5rem; margin-top: 0.25rem; display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
+                        <div>
+                            <strong>Searched Term:</strong> <span id="result-searched-term" class="badge" style="background-color: var(--blue-bg); color: var(--primary-color); font-size: 0.875rem; padding: 0.25rem 0.5rem; font-weight: 600; display: inline-block;">N/A</span>
+                            <span id="result-matching-count" class="text-gray" style="font-size: 0.85rem; margin-left: 0.5rem;">(0 matches found)</span>
+                        </div>
+                        <button class="btn btn-outline" id="view-found-btn" onclick="viewFoundDataset()" style="display: none;">
+                            <i class="fa-solid fa-eye"></i> View Dataset Found
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Analysis of Benchmark Section added based on prompt request -->
+                <div class="card result-analysis-card">
+                    <div class="card-header">
+                        <i class="fa-solid fa-chart-pie"></i>
+                        <div>
+                            <h2>Benchmark Result Analysis</h2>
+                            <p class="subtitle">AI-driven insights into the current and previous runs</p>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div id="analysis-container">
+                            <p>Loading analysis...</p>
+                        </div>
+                        <!-- Added history table -->
+                        <div class="table-responsive mt-4" style="max-height: 250px; overflow-y: auto;">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>Run #</th>
+                                        <th>Algorithm</th>
+                                        <th>Search Query</th>
+                                        <th>Ops</th>
+                                        <th>Total Time (ns)</th>
+                                        <th>Avg Time (ns)</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="history-table-body">
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="chart-card">
+                    <div class="chart-header">
+                        <h3><i class="fa-solid fa-chart-bar"></i> Execution Time Distribution</h3>
+                        <p>Violin distribution of latency across search operation batches (ns)</p>
+                    </div>
+                    <div class="chart-body">
+                        <canvas id="timeChart"></canvas>
+                    </div>
+                    <div id="time-chart-interpretation" class="chart-interpretation"></div>
+                </div>
+                <div class="chart-card">
+                    <div class="chart-header">
+                        <h3><i class="fa-solid fa-chart-bar"></i> Memory Usage Distribution</h3>
+                        <p>Violin distribution of memory footprint across search operation batches (MB)</p>
+                    </div>
+                    <div class="chart-body">
+                        <canvas id="memoryChart1"></canvas>
+                    </div>
+                    <div id="memory-chart-interpretation" class="chart-interpretation"></div>
+                </div>
+
+                <div class="chart-card full-width mt-4">
+                    <div class="chart-header">
+                        <h3>Detailed Performance Metrics</h3>
+                        <p>Comprehensive breakdown of all benchmark results</p>
+                    </div>
+                    <div class="chart-body large-chart">
+                        <canvas id="detailedChart"></canvas>
+                    </div>
+                    <div id="detailed-chart-interpretation" class="chart-interpretation"></div>
+                </div>
+
+                <div class="export-card">
+                    <div class="chart-header">
+                        <h3><i class="fa-solid fa-download"></i> Export Results</h3>
+                        <p>Download performance data for further analysis</p>
+                    </div>
+                    <div class="export-buttons">
+                        <button class="btn btn-dark" onclick="downloadJSON()"><i class="fa-solid fa-download"></i>
+                            Download JSON Report</button>
+                        <button class="btn btn-outline" onclick="downloadCSV()"><i class="fa-solid fa-download"></i>
+                            Download CSV
+                            Report</button>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Dataset Preview Modal -->
+    <div id="dataset-modal" class="modal">
+        <div class="modal-content">
+            <span class="close-modal" onclick="closeDatasetModal()">&times;</span>
+            <h2>Dataset Preview <span id="preview-count"
+                    style="font-size: 1rem; color: #666; font-weight: normal; margin-left: 10px;"></span></h2>
+            <div class="table-responsive" style="max-height: 400px; overflow-y: auto; margin-top: 15px;">
+                <table id="dataset-table" class="data-table">
+                    <thead>
+                        <tr id="dataset-table-head">
+                            <!-- Headers will be injected here -->
+                        </tr>
+                    </thead>
+                    <tbody id="dataset-table-body">
+                        <!-- Rows will be injected here -->
+                    </tbody>
+                </table>
+            </div>
+
+            <div id="dataset-pagination"
+                style="display: none; flex-direction: column; gap: 10px; margin-top: 15px; padding-top: 15px; border-top: 1px solid #eee;">
+                <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+                    <span id="page-indicator" style="font-size: 0.875rem; color: #666; font-weight: 500;">Page 1 of ?</span>
+                    <span class="slide-tip" style="font-size: 0.75rem; color: var(--text-muted);"><i class="fa-solid fa-hand-pointer"></i> Slide or Swipe table to change pages</span>
+                </div>
+                <div style="display: flex; align-items: center; width: 100%;">
+                    <i class="fa-solid fa-angle-left" style="color: var(--text-muted); font-size: 1rem; width: 15px; text-align: center;"></i>
+                    <input type="range" id="dataset-page-slider" min="1" max="1" value="1" oninput="onPageSliderInput(this.value)" style="flex: 1; margin: 0 12px; accent-color: var(--primary-color); cursor: pointer;">
+                    <i class="fa-solid fa-angle-right" style="color: var(--text-muted); font-size: 1rem; width: 15px; text-align: center;"></i>
+                </div>
+            </div>
+
+            <div id="dataset-modal-empty" style="display: none; padding: 20px; text-align: center; color: #666;">
+                No preview data available.
+            </div>
+        </div>
+    </div>
+
+    <!-- Error Modal -->
+    <div id="error-modal" class="modal">
+        <div class="modal-content" style="max-width: 400px; text-align: center; padding: 2rem; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1rem; margin: 15% auto;">
+            <i class="fa-solid fa-circle-xmark" style="font-size: 3.5rem; color: #ef4444;"></i>
+            <h2 style="margin: 0; font-size: 1.25rem; font-weight: 600; color: var(--text-main);">Invalid Input</h2>
+            <p id="error-modal-message" style="margin: 0; font-size: 0.875rem; color: var(--text-muted); line-height: 1.5;"></p>
+            <button class="btn btn-dark" style="width: 100%; justify-content: center; margin-top: 0.5rem;" onclick="closeErrorModal()">Okay</button>
+        </div>
+    </div>
+
+    <!-- Core State & Wizard Navigation -->
+    <script src="./js/app.js"></script>
+
+    <!-- Algorithmic Search Modules -->
+    <script src="./js/algorithms/binary.js"></script>
+    <script src="./js/algorithms/fibonacci.js"></script>
+    <script src="./js/algorithms/exponential.js"></script>
+
+    <!-- File Parsing & Data Generation -->
+    <script src="./js/dataset.js"></script>
+
+    <!-- Charting & Rendering engines -->
+    <script src="./js/charts.js"></script>
+    <script src="./js/ui.js"></script>
+
+    <!-- Synchronized Algorithm Visualizer -->
+    <script src="./js/visualizer.js"></script>
+
+    <!-- Benchmark orchestrator -->
+    <script src="./js/profiler.js"></script>
+</body>
+
+</html>

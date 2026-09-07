@@ -1,0 +1,12 @@
+{
+  "name": "interpolation-performance-profiler",
+  "version": "1.0.0",
+  "description": "Hybrid Interpolation-Based Searching Performance Profiler",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}
