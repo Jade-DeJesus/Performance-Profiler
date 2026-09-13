@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hybrid Interpolation-Based Searching Performance Profiler</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="../static/css/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="app-header">
+            <div class="logo-icon">
+                <i class="fa-solid fa-chart-line"></i>
+            </div>
+            <div class="header-text">
+                <h1>Hybrid Interpolation-Based Searching Performance Profiler</h1>
+                <p>Import datasets, execute benchmarks, and analyze performance metrics</p>
+            </div>
+        </header>
+
+        <!-- Main Content Wrapper -->
+        <main class="main-content">
+            <!-- Stepper -->
+            <div class="stepper-container">
+                <div class="step active" id="step1-indicator" onclick="goToStep(1)">
+                    <div class="step-circle">1</div>
+                    <span class="step-label">Import Dataset</span>
+                </div>
+                <div class="step-line"></div>
+                <div class="step" id="step2-indicator">
+                    <div class="step-circle">2</div>
+                    <span class="step-label">Run Benchmarks</span>
+                </div>
+                <div class="step-line"></div>
+                <div class="step" id="step3-indicator">
+                    <div class="step-circle">3</div>
+                    <span class="step-label">View Results</span>
+                </div>
+            </div>
+
+            <!-- Tab 1: Import Dataset -->
+            <section id="tab-import" class="tab-pane active">
+
+                <div class="card dataset-instructions-card info-card-blue">
+                    <div class="card-header">
+                        <i class="fa-solid fa-circle-info"></i>
+                        <h2>Dataset Instructions</h2>
+                    </div>
+                    <div class="card-body">
+                        <p>This system evaluates the performance of search algorithms using an e-commerce dataset.</p>
+                        <p>You can either:</p>
+                        <ul>
+                            <li>Upload your own dataset (CSV or JSON)</li>
+                            <li>Generate a sample dataset automatically</li>
+                        </ul>
+                        <p>Each dataset record should contain the following fields: <strong>SKU, Name, Category, Price, Stock</strong></p>
+                        <p>Recommended dataset sizes:</p>
+                        <ul>
+                            <li><strong>10,000 records</strong> (Small Baseline)</li>
+                            <li><strong>50,000 records</strong> (Medium Testbed)</li>
+                            <li><strong>100,000 records</strong> (Large Baseline)</li>
+                            <li><strong>500,000 records</strong> (Very Large Testbed)</li>
+                            <li><strong>1,000,000 records</strong> (Massive / Stress-Test Scale)</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <i class="fa-solid fa-database"></i>
+                        <div>
+                            <h2>Import E-commerce Dataset</h2>
+                            <p class="subtitle">Upload your dataset file (JSON or CSV format) or generate sample data
+                            </p>
+                        </div>
+                    </div>
+                    <div class="upload-area">
+                        <i class="fa-solid fa-arrow-up-from-bracket upload-icon"></i>
+                        <h3>Click to upload or drag and drop</h3>
+                        <p>Supports JSON and CSV files</p>
+                        <input type="file" id="file-upload" class="hidden-input" accept=".json,.csv">
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <i class="fa-solid fa-table-list"></i>
+                        <div>
+                            <h2>Generate Sample Data</h2>
+                            <p class="subtitle">Quickly generate synthetic e-commerce data with category-matched product names</p>
+                        </div>
+                    </div>
+
+                    <div class="distribution-selector-container">
+                        <span class="dist-label">
+                            <i class="fa-solid fa-chart-simple text-blue"></i> Key Distribution Profile:
+                        </span>
+                        <div class="distribution-options-grid">
+                            <div class="dist-option active" id="dist-opt-uniform" onclick="setDistributionMode('uniform')">
+                                <div class="dist-radio-header">
+                                    <i class="fa-solid fa-circle-check dist-radio-icon"></i>
+                                    <strong>Uniform Distribution</strong>
+                                </div>
+                                <p class="dist-desc">Evenly spaced linear SKU keys. Ideal condition for Interpolation Search ($\approx O(\log \log N)$ convergence).</p>
+                            </div>
+                            <div class="dist-option" id="dist-opt-non-uniform" onclick="setDistributionMode('non-uniform')">
+                                <div class="dist-radio-header">
+                                    <i class="fa-regular fa-circle dist-radio-icon"></i>
+                                    <strong>Non-Uniform Distribution</strong>
+                                </div>
+                                <p class="dist-desc">Clustered & exponential SKU gaps. Degrades linear interpolation to benchmark hybrid fallback performance.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="generate-buttons-grid">
+                        <button class="gen-btn" onclick="generateData(10000)">
+                            <span class="gen-val">10K</span>
+                            <span class="gen-lbl">Records</span>
+                            <span class="gen-sub">Small Baseline</span>
+                        </button>
+                        <button class="gen-btn" onclick="generateData(50000)">
+                            <span class="gen-val">50K</span>
+                            <span class="gen-lbl">Records</span>
+                            <span class="gen-sub">Medium Testbed</span>
+                        </button>
+                        <button class="gen-btn" onclick="generateData(100000)">
+                            <span class="gen-val">100K</span>
+                            <span class="gen-lbl">Records</span>
+                            <span class="gen-sub">Large Baseline</span>
+                        </button>
+                        <button class="gen-btn" onclick="generateData(500000)">
+                            <span class="gen-val">500K</span>
+                            <span class="gen-lbl">Records</span>
+                            <span class="gen-sub">Very Large Testbed</span>
+                        </button>
+                        <button class="gen-btn" onclick="generateData(1000000)">
+                            <span class="gen-val">1M</span>
+                            <span class="gen-lbl">Records</span>
+                            <span class="gen-sub">Massive / Stress-Test Scale</span>
+                        </button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Tab 2: Run Benchmarks -->
+            <section id="tab-benchmark" class="tab-pane">
+                <div class="card">
+                    <div class="card-header">
+                        <i class="fa-solid fa-bolt"></i>
+                        <div>
+                            <h2>Execute Performance Benchmark</h2>
+                            <p class="subtitle">Run comprehensive tests to measure search operations
+                            </p>
+                        </div>
+                    </div>
+
+                    <div class="dataset-loaded-panel">
+                        <div class="loaded-info">
+                            <i class="fa-solid fa-database text-blue"></i>
+                            <div>
+                                <p class="label">Dataset Loaded</p>
+                                <h3 class="value text-blue" id="loaded-records">10,000</h3>
+                                <div style="display: flex; gap: 8px; align-items: center; margin-top: 4px; flex-wrap: wrap;">
+                                    <span class="sub-label">Total Records</span>
+                                    <span id="loaded-distribution-badge" class="badge-dist badge-dist-uniform"><i class="fa-solid fa-chart-line"></i> Uniform</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="loaded-actions">
+                            <button class="btn btn-outline" id="view-dataset-btn" onclick="viewDataset()"
+                                style="margin-right: 10px;">
+                                <i class="fa-solid fa-eye"></i> View Dataset
+                            </button>
+                            <button class="btn btn-dark" onclick="startBenchmark()">
+                                <i class="fa-solid fa-play"></i> Start Benchmark
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="config-panel">
+
+                        <div class="config-row">
+                            <div class="config-group full-width">
+                                <label><i class="fa-solid fa-magnifying-glass"></i> SKU Search</label>
+                                <span class="input-label">Number of Search Operations</span>
+                                <input type="number" id="search-ops" class="form-input" value="1000">
+                                <span class="input-help" id="max-search-help">Max: 1,000,000</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="info-alert info-card-yellow">
+                        <h4><i class="fa-solid fa-circle-exclamation"></i> Benchmark Information</h4>
+                        <ul>
+                            <li><strong>Search Test:</strong> Performs random SKU lookups to measure search performance across in-memory collections</li>
+                            <li><strong>Distribution Effects:</strong> Uniform datasets allow interpolation to converge in $\approx O(\log \log N)$ steps, while Non-Uniform (skewed/clustered) datasets stress interpolation accuracy and highlight differences between Binary, Fibonacci, and Exponential hybrid fallbacks.</li>
+                            <li><strong>Algorithms Benchmarked:</strong> Automatically runs all three Interpolation variants (Binary, Fibonacci, Exponential).</li>
+                        </ul>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Tab 3: View Results -->
+            <section id="tab-results" class="tab-pane">
+                <button class="btn btn-outline" onclick="goToStep(2)">
+                    <i class="fa-solid fa-arrow-left"></i> Run Another Benchmark
+                </button>
+
+                <div class="results-kpi-grid">
+                    <div class="kpi-card">
+                        <span class="kpi-label">Total Execution Time</span>
+                        <div class="kpi-value"><span id="kpi-total-time">461,200,000.048</span> <span
+                                class="unit">ns</span></div>
+                    </div>
+                    <div class="kpi-card">
+                        <span class="kpi-label">Average Time</span>
+                        <div class="kpi-value"><span id="kpi-avg-time">533,333.361</span> <span class="unit">ns</span>
+                        </div>
+                    </div>
+                    <div class="kpi-card success">
+                        <span class="kpi-label"><i class="fa-regular fa-circle-check"></i> Fastest Search</span>
+                        <div class="kpi-value"><span class="badge badge-success" id="kpi-fastest-badge">SEARCH</span>
+                            <span id="kpi-fastest-time">100,000.024ns</span></div>
+                    </div>
+                </div>
+
+                <div class="impl-banner">
+                    <strong>Algorithms Benchmarked:</strong> <span id="result-impl-used">All Interpolation
+                        Variants</span>
+                </div>
+
+                <!-- Analysis of Benchmark Section added based on prompt request -->
+                <div class="card result-analysis-card">
+                    <div class="card-header">
+                        <i class="fa-solid fa-chart-pie"></i>
+                        <div>
+                            <h2>Benchmark Result Analysis</h2>
+                            <p class="subtitle">AI-driven insights into the current and previous runs</p>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div id="analysis-container">
+                            <p>Loading analysis...</p>
+                        </div>
+                        <!-- Added history table -->
+                        <div class="table-responsive mt-4" style="max-height: 250px; overflow-y: auto;">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>Run #</th>
+                                        <th>Algorithm</th>
+                                        <th>Ops</th>
+                                        <th>Total Time (ns)</th>
+                                        <th>Avg Time (ns)</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="history-table-body">
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="charts-row">
+                    <div class="chart-card">
+                        <div class="chart-header">
+                            <h3><i class="fa-solid fa-chart-line"></i> Execution Time Progression</h3>
+                            <p>Time taken across search operation batches (ns)</p>
+                        </div>
+                        <div class="chart-body">
+                            <canvas id="timeChart"></canvas>
+                        </div>
+                        <div id="time-chart-interpretation" class="chart-interpretation"></div>
+                    </div>
+                    <div class="chart-card">
+                        <div class="chart-header">
+                            <h3><i class="fa-solid fa-chart-line"></i> Memory Usage Analysis</h3>
+                            <p>Memory consumption across search operation batches (MB)</p>
+                        </div>
+                        <div class="chart-body">
+                            <canvas id="memoryChart1"></canvas>
+                        </div>
+                        <div id="memory-chart-interpretation" class="chart-interpretation"></div>
+                    </div>
+                </div>
+
+                <div class="chart-card full-width mt-4">
+                    <div class="chart-header">
+                        <h3>Detailed Performance Metrics</h3>
+                        <p>Comprehensive breakdown of all benchmark results</p>
+                    </div>
+                    <div class="chart-body large-chart">
+                        <canvas id="detailedChart"></canvas>
+                    </div>
+                    <div id="detailed-chart-interpretation" class="chart-interpretation"></div>
+                </div>
+
+                <div class="export-card">
+                    <div class="chart-header">
+                        <h3><i class="fa-solid fa-download"></i> Export Results</h3>
+                        <p>Download performance data for further analysis</p>
+                    </div>
+                    <div class="export-buttons">
+                        <button class="btn btn-dark" onclick="downloadJSON()"><i class="fa-solid fa-download"></i>
+                            Download JSON Report</button>
+                        <button class="btn btn-outline" onclick="downloadCSV()"><i class="fa-solid fa-download"></i>
+                            Download CSV
+                            Report</button>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Dataset Preview Modal -->
+    <div id="dataset-modal" class="modal">
+        <div class="modal-content">
+            <span class="close-modal" onclick="closeDatasetModal()">&times;</span>
+            <h2>Dataset Preview <span id="preview-count"
+                    style="font-size: 1rem; color: #666; font-weight: normal; margin-left: 10px;"></span></h2>
+            <div class="table-responsive" style="max-height: 400px; overflow-y: auto; margin-top: 15px;">
+                <table id="dataset-table" class="data-table">
+                    <thead>
+                        <tr id="dataset-table-head">
+                            <!-- Headers will be injected here -->
+                        </tr>
+                    </thead>
+                    <tbody id="dataset-table-body">
+                        <!-- Rows will be injected here -->
+                    </tbody>
+                </table>
+            </div>
+
+            <div id="dataset-pagination"
+                style="display: none; flex-direction: column; gap: 10px; margin-top: 15px; padding-top: 15px; border-top: 1px solid #eee;">
+                <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+                    <span id="page-indicator" style="font-size: 0.875rem; color: #666; font-weight: 500;">Page 1 of ?</span>
+                    <span class="slide-tip" style="font-size: 0.75rem; color: var(--text-muted);"><i class="fa-solid fa-hand-pointer"></i> Slide or Swipe table to change pages</span>
+                </div>
+                <div style="display: flex; align-items: center; width: 100%;">
+                    <i class="fa-solid fa-angle-left" style="color: var(--text-muted); font-size: 1rem; width: 15px; text-align: center;"></i>
+                    <input type="range" id="dataset-page-slider" min="1" max="1" value="1" oninput="onPageSliderInput(this.value)" style="flex: 1; margin: 0 12px; accent-color: var(--primary-color); cursor: pointer;">
+                    <i class="fa-solid fa-angle-right" style="color: var(--text-muted); font-size: 1rem; width: 15px; text-align: center;"></i>
+                </div>
+            </div>
+
+            <div id="dataset-modal-empty" style="display: none; padding: 20px; text-align: center; color: #666;">
+                No preview data available.
+            </div>
+        </div>
+    </div>
+
+    <!-- Alert / Error Modal -->
+    <div id="error-modal" class="modal">
+        <div class="modal-content" style="max-width: 420px; text-align: center; padding: 2rem; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1rem; margin: 15% auto;">
+            <i id="error-modal-icon" class="fa-solid fa-circle-xmark" style="font-size: 3.5rem; color: #ef4444;"></i>
+            <h2 id="error-modal-title" style="margin: 0; font-size: 1.25rem; font-weight: 600; color: var(--text-main);">Invalid Input</h2>
+            <p id="error-modal-message" style="margin: 0; font-size: 0.875rem; color: var(--text-muted); line-height: 1.5;"></p>
+            <button class="btn btn-dark" style="width: 100%; justify-content: center; margin-top: 0.5rem;" onclick="closeErrorModal()">Okay</button>
+        </div>
+    </div>
+
+    <script src="../static/js/script.js"></script>
+</body>
+
+</html>
