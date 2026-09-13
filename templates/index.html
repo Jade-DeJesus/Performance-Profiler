@@ -59,14 +59,14 @@
                             <li>Upload your own dataset (CSV or JSON)</li>
                             <li>Generate a sample dataset automatically</li>
                         </ul>
-                        <p>Each dataset record should contain the following fields: <strong>SKU, Name, Category, Price,
-                                Stock</strong></p>
+                        <p>Each dataset record should contain the following fields: <strong>SKU, Name, Category, Price, Stock</strong></p>
                         <p>Recommended dataset sizes:</p>
                         <ul>
-                            <li><strong>1,000 records</strong> (small test)</li>
-                            <li><strong>10,000 records</strong> (medium test)</li>
-                            <li><strong>100,000 records</strong> (large test)</li>
-                            <li><strong>1,000,000 records</strong> (stress test)</li>
+                            <li><strong>10,000 records</strong> (Small Baseline)</li>
+                            <li><strong>50,000 records</strong> (Medium Testbed)</li>
+                            <li><strong>100,000 records</strong> (Large Baseline)</li>
+                            <li><strong>500,000 records</strong> (Very Large Testbed)</li>
+                            <li><strong>1,000,000 records</strong> (Massive / Stress-Test Scale)</li>
                         </ul>
                     </div>
                 </div>
@@ -93,25 +93,57 @@
                         <i class="fa-solid fa-table-list"></i>
                         <div>
                             <h2>Generate Sample Data</h2>
-                            <p class="subtitle">Quickly generate synthetic e-commerce data for testing</p>
+                            <p class="subtitle">Quickly generate synthetic e-commerce data with category-matched product names</p>
                         </div>
                     </div>
+
+                    <div class="distribution-selector-container">
+                        <span class="dist-label">
+                            <i class="fa-solid fa-chart-simple text-blue"></i> Key Distribution Profile:
+                        </span>
+                        <div class="distribution-options-grid">
+                            <div class="dist-option active" id="dist-opt-uniform" onclick="setDistributionMode('uniform')">
+                                <div class="dist-radio-header">
+                                    <i class="fa-solid fa-circle-check dist-radio-icon"></i>
+                                    <strong>Uniform Distribution</strong>
+                                </div>
+                                <p class="dist-desc">Evenly spaced linear SKU keys. Ideal condition for Interpolation Search ($\approx O(\log \log N)$ convergence).</p>
+                            </div>
+                            <div class="dist-option" id="dist-opt-non-uniform" onclick="setDistributionMode('non-uniform')">
+                                <div class="dist-radio-header">
+                                    <i class="fa-regular fa-circle dist-radio-icon"></i>
+                                    <strong>Non-Uniform Distribution</strong>
+                                </div>
+                                <p class="dist-desc">Clustered & exponential SKU gaps. Degrades linear interpolation to benchmark hybrid fallback performance.</p>
+                            </div>
+                        </div>
+                    </div>
+
                     <div class="generate-buttons-grid">
-                        <button class="gen-btn" onclick="generateData(1000)">
-                            <span class="gen-val">1K</span>
-                            <span class="gen-lbl">Records</span>
-                        </button>
                         <button class="gen-btn" onclick="generateData(10000)">
                             <span class="gen-val">10K</span>
                             <span class="gen-lbl">Records</span>
+                            <span class="gen-sub">Small Baseline</span>
+                        </button>
+                        <button class="gen-btn" onclick="generateData(50000)">
+                            <span class="gen-val">50K</span>
+                            <span class="gen-lbl">Records</span>
+                            <span class="gen-sub">Medium Testbed</span>
                         </button>
                         <button class="gen-btn" onclick="generateData(100000)">
                             <span class="gen-val">100K</span>
                             <span class="gen-lbl">Records</span>
+                            <span class="gen-sub">Large Baseline</span>
+                        </button>
+                        <button class="gen-btn" onclick="generateData(500000)">
+                            <span class="gen-val">500K</span>
+                            <span class="gen-lbl">Records</span>
+                            <span class="gen-sub">Very Large Testbed</span>
                         </button>
                         <button class="gen-btn" onclick="generateData(1000000)">
                             <span class="gen-val">1M</span>
                             <span class="gen-lbl">Records</span>
+                            <span class="gen-sub">Massive / Stress-Test Scale</span>
                         </button>
                     </div>
                 </div>
@@ -134,8 +166,11 @@
                             <i class="fa-solid fa-database text-blue"></i>
                             <div>
                                 <p class="label">Dataset Loaded</p>
-                                <h3 class="value text-blue" id="loaded-records">1,000,000</h3>
-                                <p class="sub-label">Total Records</p>
+                                <h3 class="value text-blue" id="loaded-records">10,000</h3>
+                                <div style="display: flex; gap: 8px; align-items: center; margin-top: 4px; flex-wrap: wrap;">
+                                    <span class="sub-label">Total Records</span>
+                                    <span id="loaded-distribution-badge" class="badge-dist badge-dist-uniform"><i class="fa-solid fa-chart-line"></i> Uniform</span>
+                                </div>
                             </div>
                         </div>
                         <div class="loaded-actions">
@@ -164,11 +199,9 @@
                     <div class="info-alert info-card-yellow">
                         <h4><i class="fa-solid fa-circle-exclamation"></i> Benchmark Information</h4>
                         <ul>
-                            <li><strong>Search Test:</strong> Performs random SKU lookups to measure search performance
-                            </li>
-                            <li>All operations are performed in-memory to ensure accurate timing measurements</li>
-                            <li><strong>Algorithms Benchmarked:</strong> Automatically runs all three Interpolation
-                                variants (Binary, Fibonacci, Exponential).</li>
+                            <li><strong>Search Test:</strong> Performs random SKU lookups to measure search performance across in-memory collections</li>
+                            <li><strong>Distribution Effects:</strong> Uniform datasets allow interpolation to converge in $\approx O(\log \log N)$ steps, while Non-Uniform (skewed/clustered) datasets stress interpolation accuracy and highlight differences between Binary, Fibonacci, and Exponential hybrid fallbacks.</li>
+                            <li><strong>Algorithms Benchmarked:</strong> Automatically runs all three Interpolation variants (Binary, Fibonacci, Exponential).</li>
                         </ul>
                     </div>
                 </div>
@@ -321,6 +354,16 @@
             <div id="dataset-modal-empty" style="display: none; padding: 20px; text-align: center; color: #666;">
                 No preview data available.
             </div>
+        </div>
+    </div>
+
+    <!-- Alert / Error Modal -->
+    <div id="error-modal" class="modal">
+        <div class="modal-content" style="max-width: 420px; text-align: center; padding: 2rem; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1rem; margin: 15% auto;">
+            <i id="error-modal-icon" class="fa-solid fa-circle-xmark" style="font-size: 3.5rem; color: #ef4444;"></i>
+            <h2 id="error-modal-title" style="margin: 0; font-size: 1.25rem; font-weight: 600; color: var(--text-main);">Invalid Input</h2>
+            <p id="error-modal-message" style="margin: 0; font-size: 0.875rem; color: var(--text-muted); line-height: 1.5;"></p>
+            <button class="btn btn-dark" style="width: 100%; justify-content: center; margin-top: 0.5rem;" onclick="closeErrorModal()">Okay</button>
         </div>
     </div>
 

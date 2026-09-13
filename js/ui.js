@@ -1,8 +1,15 @@
-function showErrorPopup(message) {
+function showErrorPopup(message, title = "Invalid Input", iconClass = "fa-solid fa-circle-xmark", iconColor = "#ef4444") {
     const modal = document.getElementById('error-modal');
     const msgEl = document.getElementById('error-modal-message');
+    const titleEl = document.getElementById('error-modal-title');
+    const iconEl = document.getElementById('error-modal-icon');
     if (modal && msgEl) {
         msgEl.innerText = message;
+        if (titleEl) titleEl.innerText = title;
+        if (iconEl) {
+            iconEl.className = iconClass;
+            iconEl.style.color = iconColor;
+        }
         modal.style.display = 'block';
     }
 }
@@ -30,35 +37,24 @@ function generateAnalysisHTML() {
     if (benchmarkHistory.length === 0) return "<p>No benchmark data available.</p>";
 
     let fastestRun = benchmarkHistory.reduce((prev, current) => (prev.avgTimeNs < current.avgTimeNs) ? prev : current);
-
-    let algorithmsRun = [...new Set(benchmarkHistory.map(run => run.algorithmName))];
-    let algorithmsRunText = algorithmsRun.length === 1 ? algorithmsRun[0] : algorithmsRun.slice(0, -1).join(', ') + ' and ' + algorithmsRun[algorithmsRun.length - 1];
+    const distType = (typeof currentDatasetDistribution !== 'undefined' && currentDatasetDistribution === 'non-uniform') ? 'Non-Uniform' : 'Uniform';
 
     let html = ``;
 
-    // Overview
-    html += `<div class="analysis-section">`;
-    html += `<h4><i class="fa-solid fa-ranking-star"></i> Performance Overview</h4>`;
-    html += `<p>A total of ${benchmarkHistory.length} benchmark runs have been executed, covering ${algorithmsRunText}. `;
-    if (benchmarkHistory.length === 1) {
-        html += `For the search query <strong>"${benchmarkHistory[0].searchTerm}"</strong> (which matched ${benchmarkHistory[0].matchingCount} record(s)), the algorithm averaged ${Math.round(benchmarkHistory[0].avgTimeNs).toLocaleString()}ns per operation.</p>`;
-    } else {
-        html += `For the search query <strong>"${fastestRun.searchTerm}"</strong> (which matched ${fastestRun.matchingCount} record(s)), comparing the results shows that <strong>${fastestRun.algorithmName}</strong> (Run #${fastestRun.run}) proved to be the fastest, averaging ${Math.round(fastestRun.avgTimeNs).toLocaleString()}ns per operation. `;
+    // 1. Benchmark Conclusion at the Top
+    html += `<div class="analysis-section conclusion-box" style="padding: 16px 20px; background: rgba(59, 130, 246, 0.08); border-left: 4px solid var(--primary-color); border-radius: 6px;">`;
+    html += `<h4 style="margin-top: 0; margin-bottom: 8px; color: var(--primary-color); font-size: 1.05rem;"><i class="fa-solid fa-clipboard-check"></i> Benchmark Conclusion</h4>`;
+    html += `<p style="margin-bottom: 12px; line-height: 1.6;"><strong>${fastestRun.algorithmName}</strong> (Run #${fastestRun.run}) is overall the most optimal choice for finding records matching <strong>"${fastestRun.searchTerm || 'SKU'}"</strong> in this ${distType.toLowerCase()} dataset. It delivers the highest raw execution speed, averaging <strong>${Math.round(fastestRun.avgTimeNs).toLocaleString()}ns</strong> per operation while providing a highly favorable balance between low look-up latency and manageable memory consumption.</p>`;
 
-        let slowestRun = benchmarkHistory.reduce((prev, current) => (prev.avgTimeNs > current.avgTimeNs) ? prev : current);
-        if (fastestRun.run !== slowestRun.run) {
-            let speedup = (slowestRun.avgTimeNs / fastestRun.avgTimeNs).toFixed(2);
-            html += `It is approximately <strong>${speedup}x</strong> faster than the slowest run (${slowestRun.algorithmName}, Run #${slowestRun.run}). `;
-        }
-        html += `</p>`;
+    // 2. Integrated Distribution Analysis inside Conclusion
+    html += `<div class="p-3" style="background: rgba(255, 255, 255, 0.75); border-left: 3px solid ${distType === 'Uniform' ? 'var(--primary-color)' : '#f59e0b'}; border-radius: 4px; font-size: 0.9rem; line-height: 1.55;">`;
+    if (distType === 'Uniform') {
+        html += `<strong><i class="fa-solid fa-chart-line text-blue"></i> Distribution Analysis (Uniform):</strong> The linear progression of keys across the dataset allows the interpolation formula to estimate target indices with high precision in $O(\\log \\log N)$ probes. All three hybrid variants (Binary, Fibonacci, Exponential) converge rapidly because initial interpolation probes consistently land within immediate proximity of the target index.`;
+    } else {
+        html += `<strong><i class="fa-solid fa-chart-pie" style="color: #f59e0b;"></i> Distribution Analysis (Non-Uniform):</strong> Skewed power-law key density and cluster leap gaps introduce estimation error $(\\Delta pos)$ during initial global linear interpolation. Under non-uniform conditions, <em>Interpolation-Exponential</em> isolates local segments via $2^k$ doubling where local linearity is preserved before interpolating, while <em>Interpolation-Binary</em> and <em>Interpolation-Fibonacci</em> reliably resolve misestimations through bisection and golden-ratio subdivisions respectively.`;
     }
     html += `</div>`;
-
-    // Conclusion Separated
-    html += `<div class="analysis-section conclusion-box mt-4" style="padding: 15px; background: rgba(59, 130, 246, 0.1); border-left: 4px solid var(--primary-color); border-radius: 4px;">`;
-    html += `<h4><i class="fa-solid fa-clipboard-check"></i> Conclusion</h4>`;
-    html += `<p style="margin-bottom: 0;"><strong>${fastestRun.algorithmName}</strong> is overall the most optimal choice for finding records matching <strong>"${fastestRun.searchTerm}"</strong> in this dataset. It delivers the highest raw execution speed while providing a highly favorable trade-off between low look-up latency and manageable memory consumption.`;
-    html += `</p></div>`;
+    html += `</div>`;
 
     return html;
 }
@@ -84,13 +80,17 @@ function updateChartInterpretations() {
         return (prevAvgMem < currAvgMem) ? prev : current;
     });
 
+    const distType = (typeof currentDatasetDistribution !== 'undefined' && currentDatasetDistribution === 'non-uniform') ? 'Non-Uniform' : 'Uniform';
+    let algorithmsRun = [...new Set(benchmarkHistory.map(run => run.algorithmName))];
+    let algorithmsRunText = algorithmsRun.length === 1 ? algorithmsRun[0] : algorithmsRun.slice(0, -1).join(', ') + ' and ' + algorithmsRun[algorithmsRun.length - 1];
+
     // 1. Execution Time Distribution Interpretation
     let timeHtml = `<h4><i class="fa-solid fa-clock"></i> Execution Time Distribution Interpretation</h4>`;
-    timeHtml += `<p>Looking at the <strong>Execution Time Distribution</strong> violin plot for query <strong>"${fastestRun.searchTerm}"</strong>, `;
+    timeHtml += `<p>Looking at the <strong>Execution Time Distribution</strong> violin plot for query <strong>"${fastestRun.searchTerm || 'SKU'}"</strong>, `;
     if (benchmarkHistory.length === 1) {
-        timeHtml += `the violin shape is narrow and concentrated, indicating that ${benchmarkHistory[0].algorithmName} provides consistent lookup performance unaffected by minor data variances within batches.`;
+        timeHtml += `the violin density shape is concentrated and narrow, indicating that ${benchmarkHistory[0].algorithmName} provides consistent lookup latency unaffected by minor data variances within batches.`;
     } else {
-        timeHtml += `<strong>${fastestRun.algorithmName}</strong> generally exhibits the lowest distribution median and tightest density shape. If outliers are present, they are visible as sparse extensions, indicating that potential edge cases are well-mitigated.`;
+        timeHtml += `<strong>${fastestRun.algorithmName}</strong> generally exhibits the lowest distribution median and tightest density band. Potential edge cases and boundary lookups are well-mitigated by effective search bounds checking.`;
     }
     timeHtml += `</p>`;
     timeInterpretationEl.innerHTML = timeHtml;
@@ -98,22 +98,35 @@ function updateChartInterpretations() {
     // 2. Memory Usage Distribution Interpretation
     let memHtml = `<h4><i class="fa-solid fa-memory"></i> Memory Usage Distribution Interpretation</h4>`;
     let minAvgMem = (mostMemoryEfficientRun.memDataMB.reduce((a, b) => a + b, 0) / mostMemoryEfficientRun.memDataMB.length).toFixed(2);
-    memHtml += `<p>The <strong>Memory Usage Distribution</strong> violin plot tracks dynamic overhead while searching for <strong>"${mostMemoryEfficientRun.searchTerm}"</strong>. `;
+    memHtml += `<p>The <strong>Memory Usage Distribution</strong> violin plot tracks dynamic memory overhead during execution. `;
     if (benchmarkHistory.length === 1) {
-        memHtml += `Memory utilization is tightly bound around <strong>${minAvgMem}MB</strong>, indicating robust garbage collection and minimal variable bloat during successive operations.`;
+        memHtml += `Memory utilization is tightly bound around <strong>${minAvgMem}MB</strong>, indicating robust garbage collection cycles and minimal variable bloat during successive search operations.`;
     } else {
-        memHtml += `<strong>${mostMemoryEfficientRun.algorithmName}</strong> (Run #${mostMemoryEfficientRun.run}) maintains the most efficient profile at roughly <strong>${minAvgMem}MB</strong>. Some algorithms might temporarily show a wider violin width at higher bounds due to larger sequence generation (like Fibonacci/exponential bound arrays).`;
+        memHtml += `<strong>${mostMemoryEfficientRun.algorithmName}</strong> (Run #${mostMemoryEfficientRun.run}) maintains the most efficient profile at roughly <strong>${minAvgMem}MB</strong>. Sequence and bound tracking allocations remain strictly bounded throughout execution.`;
     }
     memHtml += `</p>`;
     memoryInterpretationEl.innerHTML = memHtml;
 
-    // 3. Detailed Performance Metrics Interpretation
-    let detHtml = `<h4><i class="fa-solid fa-layer-group"></i> Detailed Performance Metrics Interpretation</h4>`;
-    detHtml += `<p>The <strong>Detailed Performance Metrics</strong> overlays both time and memory violin distributions side-by-side for query <strong>"${fastestRun.searchTerm}"</strong>. `;
-    if (benchmarkHistory.length > 1 && fastestRun.run !== mostMemoryEfficientRun.run) {
-        detHtml += `This visual intersection reveals an important trade-off: the algorithm achieving the fastest lookups (${fastestRun.algorithmName}) sometimes requires a slightly higher memory footprint compared to the most memory-efficient one (${mostMemoryEfficientRun.algorithmName}).`;
+    // 3. Performance Overview & Detailed Performance Metrics Interpretation
+    let detHtml = `<h4><i class="fa-solid fa-ranking-star"></i> Performance Overview & Detailed Metrics Interpretation</h4>`;
+    detHtml += `<p>A total of <strong>${benchmarkHistory.length}</strong> benchmark runs have been executed, evaluating <strong>${algorithmsRunText}</strong> across a <strong>${distType}</strong> key distribution for search query <strong>"${fastestRun.searchTerm || 'SKU'}"</strong> (which matched ${fastestRun.matchingCount || 0} record(s)). `;
+
+    if (benchmarkHistory.length === 1) {
+        detHtml += `The algorithm averaged <strong>${Math.round(benchmarkHistory[0].avgTimeNs).toLocaleString()}ns</strong> per operation with a steady memory profile of <strong>${minAvgMem}MB</strong>.`;
     } else {
-        detHtml += `The side-by-side violin distributions validate that rapid index scaling does not trigger anomalous memory leakage, proving the architecture's stability under load.`;
+        let slowestRun = benchmarkHistory.reduce((prev, current) => (prev.avgTimeNs > current.avgTimeNs) ? prev : current);
+        detHtml += `Comparing performance across runs, <strong>${fastestRun.algorithmName}</strong> (Run #${fastestRun.run}) proved to be the fastest at <strong>${Math.round(fastestRun.avgTimeNs).toLocaleString()}ns</strong> per operation. `;
+        if (fastestRun.run !== slowestRun.run) {
+            let speedup = (slowestRun.avgTimeNs / fastestRun.avgTimeNs).toFixed(2);
+            detHtml += `It achieved an approximate <strong>${speedup}x speedup</strong> over the slowest run (${slowestRun.algorithmName}, Run #${slowestRun.run} at ${Math.round(slowestRun.avgTimeNs).toLocaleString()}ns). `;
+        }
+    }
+
+    detHtml += `</p><p style="margin-top: 8px;">The side-by-side overlay of execution latency (solid time violin) and memory footprint (dashed memory violin) illustrates the system's operational characteristics: `;
+    if (benchmarkHistory.length > 1 && fastestRun.run !== mostMemoryEfficientRun.run) {
+        detHtml += `the fastest search algorithm (${fastestRun.algorithmName}) trades a slight memory overhead for higher index traversal speed compared to the most memory-efficient algorithm (${mostMemoryEfficientRun.algorithmName}). `;
+    } else {
+        detHtml += `rapid key index resolution scales efficiently without triggering anomalous memory spikes or allocation leaks. `;
     }
     detHtml += `</p>`;
     detailedInterpretationEl.innerHTML = detHtml;

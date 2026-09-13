@@ -127,24 +127,110 @@
     display: none;
 }
 
+/* Distribution Profile Selector */
+.distribution-selector-container {
+    margin-bottom: 1.25rem;
+}
+
+.dist-label {
+    font-weight: 600;
+    font-size: 0.875rem;
+    color: var(--text-main);
+    margin-bottom: 0.6rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.distribution-options-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.85rem;
+}
+
+.dist-option {
+    background: var(--bg-white);
+    border: 1.5px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: 0.85rem 1rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    user-select: none;
+}
+
+.dist-option:hover {
+    border-color: var(--primary-color);
+    background-color: #f8fafc;
+}
+
+.dist-option.active {
+    border-color: var(--primary-color);
+    background-color: var(--blue-bg);
+    box-shadow: 0 0 0 1px var(--primary-color);
+}
+
+.dist-radio-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.925rem;
+    color: var(--text-main);
+}
+
+.dist-radio-icon {
+    font-size: 1rem;
+    color: var(--primary-color);
+}
+
+.dist-desc {
+    font-size: 0.775rem;
+    color: var(--text-muted);
+    margin: 0.35rem 0 0 1.5rem;
+    line-height: 1.35;
+}
+
+/* Distribution Indicator Badges */
+.badge-dist {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 0.2rem 0.6rem;
+    border-radius: 9999px;
+}
+
+.badge-dist-uniform {
+    background: #e0f2fe;
+    color: #0369a1;
+    border: 1px solid #bae6fd;
+}
+
+.badge-dist-non-uniform {
+    background: #fef3c7;
+    color: #b45309;
+    border: 1px solid #fde68a;
+}
+
 /* Generate Buttons */
 .generate-buttons-grid {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 1rem;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 0.75rem;
 }
 
 .gen-btn {
     background: var(--bg-white);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
-    padding: 1.25rem 1rem;
+    padding: 1.15rem 0.75rem;
     text-align: center;
     cursor: pointer;
     transition: all 0.2s;
     display: flex;
     flex-direction: column;
     align-items: center;
+    justify-content: center;
 }
 
 .gen-btn:hover, .gen-btn.active {
@@ -160,9 +246,18 @@
 }
 
 .gen-lbl {
-    font-size: 0.875rem;
+    font-size: 0.85rem;
     color: var(--text-muted);
-    margin-top: 0.25rem;
+    margin-top: 0.15rem;
+}
+
+.gen-sub {
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--primary-color);
+    margin-top: 0.35rem;
+    line-height: 1.25;
+    text-align: center;
 }
 
 /* Information Cards */
@@ -462,8 +557,22 @@
 }
 
 /* Responsive Component Adjustments */
+@media (max-width: 1024px) {
+    /* Dataset Generation Grid: 5 columns to 3 columns */
+    .generate-buttons-grid {
+        grid-template-columns: repeat(3, 1fr);
+        gap: 0.75rem;
+    }
+}
+
 @media (max-width: 768px) {
-    /* Dataset Generation Grid: 4 columns to 2 columns */
+    /* Distribution Grid: 2 columns to 1 column on smaller tablets/mobile */
+    .distribution-options-grid {
+        grid-template-columns: 1fr;
+        gap: 0.65rem;
+    }
+
+    /* Dataset Generation Grid: 3 columns to 2 columns */
     .generate-buttons-grid {
         grid-template-columns: repeat(2, 1fr);
         gap: 0.75rem;

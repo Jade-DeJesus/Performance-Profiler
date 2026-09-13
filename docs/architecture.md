@@ -46,19 +46,25 @@ hybrid-interpolation-profiler/
 - **`js/visualizer.js`**: Synchronized multi-track visualizer executing Interpolation-Binary, Interpolation-Fibonacci, and Interpolation-Exponential searches in frame-accurate lockstep with play, pause, step, speed, and real-time comparative telemetry.
 
 ### 3. Business & Core Processing Layer (`js/dataset.js`, `js/profiler.js`)
-- **`js/dataset.js`**: Parses CSV/JSON datasets uploaded by the user, and incorporates a synthetic data generator mimicking typical production environments.
+- **`js/dataset.js`**: Parses and validates CSV/JSON datasets uploaded by the user (ensuring `SKU`, `Name`, `Category`, `Price`, and `Stock` are present, triggering an alert and blocking navigation if incomplete data is uploaded), and incorporates a high-performance synthetic data generator producing records across 5 calibrated scale tiers: 10K (Small Baseline), 50K (Medium Testbed), 100K (Large Baseline), 500K (Very Large Testbed), and 1M (Massive / Stress-Test Scale). Features realistic category-based naming pools (`Electronics`, `Clothing`, `Home`, `Toys`) and dual key distribution profiles:
+  - **Uniform**: Linear key stepping for near-ideal interpolation probing.
+  - **Non-Uniform**: Skewed power-law curve ($t^{2.5}$) and cluster leap gaps to simulate real-world non-linear indexing.
 - **`js/profiler.js`**: Orchestrates benchmarks on in-memory collections using high-precision timers (`performance.now()`). Automatically runs multiple search iteration groups across the collection to ensure statistical significance.
 
 ### 4. Algorithmic Search Module (`js/algorithms/`)
 Contains specialized interpolation-hybrid search implementations. These methods calculate search boundaries based on key distribution to converge faster than conventional logarithmic searches on linear, uniform datasets:
-- **`binary.js`**: Fallback to Binary Search logic.
-- **`fibonacci.js`**: Fallback to Fibonacci-based intervals.
-- **`exponential.js`**: Fallback to Exponential doubling boundaries.
+- **`binary.js`**: Interpolation with fallback to Binary Search bisection logic.
+- **`fibonacci.js`**: Interpolation with fallback to Fibonacci golden-ratio interval partitioning.
+- **`exponential.js`**: Interpolation with fallback to Exponential doubling range expansion ($2^k$).
 
-## Search Algorithmic Design
+## Search Algorithmic Design & Key Distribution Effects
 
 Interpolation search works by calculating a probing position `pos` based on key distribution:
 
 \[pos = low + \left\lfloor \frac{high - low}{arr[high].key - arr[low].key} \times (key - arr[low].key) \right\rfloor\]
 
-If the value at `pos` matches the target, search completes. Otherwise, the algorithm recursively divides the search range. If the key distribution is non-uniform, the algorithm could degrade. The profile tests hybrid algorithms that utilize interpolation for initial bounds estimation, switching to Binary, Fibonacci, or Exponential searches for localized convergence.
+- **Under Uniform Distribution**: Keys are evenly distributed across the array index space. The estimated probe position `pos` closely matches the actual key index, yielding average time complexity of $O(\log \log N)$ or near $O(1)$.
+- **Under Non-Uniform Distribution**: Non-linear key density and clustered gaps cause the linear interpolation formula to misestimate `pos`, introducing a wider error bracket:
+  - **Interpolation-Binary**: Resiliently divides the remaining window in halves ($O(\log N)$ worst-case guarantee).
+  - **Interpolation-Fibonacci**: Divides remaining intervals using Fibonacci numbers (non-power-of-2 partitions, purely additive/subtractive index calculations).
+  - **Interpolation-Exponential**: Rapidly bounds the target index range using powers-of-two growth ($2^0, 2^1, 2^2, \dots, 2^k$) before interpolating within the localized subset where key density is approximately uniform.

@@ -10,6 +10,32 @@ let benchmarkHistory = []; // Track all benchmarking runs
 let datasetHeaders = []; // Store the headers for the dataset tabular view
 let currentPreviewPage = 1; // Track the current page in the dataset modal
 const previewRowsPerPage = 100; // Only display 100 rows per page to prevent browser freeze
+let selectedDistributionMode = 'uniform'; // 'uniform' | 'non-uniform' for synthetic generator
+let currentDatasetDistribution = 'uniform'; // Active loaded dataset distribution
+
+// Distribution Selector Mode Switcher
+function setDistributionMode(mode) {
+    selectedDistributionMode = mode;
+    const optUniform = document.getElementById('dist-opt-uniform');
+    const optNonUniform = document.getElementById('dist-opt-non-uniform');
+    if (optUniform && optNonUniform) {
+        if (mode === 'uniform') {
+            optUniform.classList.add('active');
+            optNonUniform.classList.remove('active');
+            const iconUni = optUniform.querySelector('.dist-radio-icon');
+            const iconNon = optNonUniform.querySelector('.dist-radio-icon');
+            if (iconUni) iconUni.className = 'fa-solid fa-circle-check dist-radio-icon';
+            if (iconNon) iconNon.className = 'fa-regular fa-circle dist-radio-icon';
+        } else {
+            optNonUniform.classList.add('active');
+            optUniform.classList.remove('active');
+            const iconUni = optUniform.querySelector('.dist-radio-icon');
+            const iconNon = optNonUniform.querySelector('.dist-radio-icon');
+            if (iconUni) iconUni.className = 'fa-regular fa-circle dist-radio-icon';
+            if (iconNon) iconNon.className = 'fa-solid fa-circle-check dist-radio-icon';
+        }
+    }
+}
 
 // Step Wizard Navigation
 function goToStep(step) {
