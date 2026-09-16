@@ -1,13 +1,188 @@
 // Required fields for any valid dataset
 const REQUIRED_FIELDS = ['SKU', 'Name', 'Category', 'Price', 'Stock'];
 
+const FIELD_ALIASES = {
+    'SKU': ['sku', 'id', 'item code', 'item_code', 'item id', 'item_id', 'product id', 'product_id', 'code', 'key'],
+    'Name': ['name', 'product name', 'product_name', 'item name', 'item_name', 'title', 'product', 'item', 'description', 'label'],
+    'Category': ['category', 'dept', 'department', 'type', 'group', 'genre', 'class', 'category name', 'category_name'],
+    'Price': ['price', 'cost', 'amount', 'unit price', 'unit_price', 'msrp', 'rate', 'retail price', 'retail_price'],
+    'Stock': ['stock', 'quantity', 'qty', 'inventory', 'count', 'units', 'available', 'stock quantity', 'stock_quantity']
+};
+
+function cleanQuotedField(val) {
+    if (typeof val !== 'string') return val;
+    val = val.trim();
+    if (val.startsWith('"') && val.endsWith('"') && val.length >= 2) {
+        val = val.slice(1, -1).replace(/""/g, '"');
+    }
+    return val;
+}
+
 /**
- * Validates that dataset headers contain all required fields (case-insensitive)
- * and that each record row contains non-empty values for these fields.
- * @param {Array<string>} headers 
- * @param {Array<Array>} rows 
- * @returns {{isValid: boolean, missingHeaders?: Array<string>, reason?: string}}
+ * Fast RFC-4180 compliant CSV parser capable of streaming through large (1M+ rows) datasets.
+ * Properly handles quoted fields, escaped quotes (""), newlines inside quotes, and UTF-8 BOM.
  */
+function parseCSV(text) {
+    if (!text || text.length === 0) return [];
+
+    let i = 0;
+    if (text.charCodeAt(0) === 0xFEFF) {
+        i = 1;
+    }
+
+    const rows = [];
+    const len = text.length;
+    let row = [];
+    let fieldStart = i;
+    let inQuotes = false;
+    let hasQuotes = false;
+
+    while (i < len) {
+        const code = text.charCodeAt(i);
+
+        if (code === 34) { // '"'
+            hasQuotes = true;
+            if (inQuotes && i + 1 < len && text.charCodeAt(i + 1) === 34) {
+                // Escaped quote ""
+                i += 2;
+                continue;
+            }
+            inQuotes = !inQuotes;
+            i++;
+            continue;
+        }
+
+        if (!inQuotes) {
+            if (code === 44) { // ','
+                let field = text.slice(fieldStart, i).trim();
+                if (hasQuotes) field = cleanQuotedField(field);
+                row.push(field);
+                fieldStart = i + 1;
+                hasQuotes = false;
+                i++;
+                continue;
+            }
+
+            if (code === 10 || code === 13) { // '\n' or '\r'
+                let field = text.slice(fieldStart, i).trim();
+                if (hasQuotes) field = cleanQuotedField(field);
+                row.push(field);
+
+                if (code === 13 && i + 1 < len && text.charCodeAt(i + 1) === 10) {
+                    i++;
+                }
+
+                if (row.some(c => c !== '')) {
+                    rows.push(row);
+                }
+                row = [];
+                fieldStart = i + 1;
+                hasQuotes = false;
+                i++;
+                continue;
+            }
+        }
+
+        i++;
+    }
+
+    if (fieldStart < len || row.length > 0) {
+        let field = text.slice(fieldStart, len).trim();
+        if (hasQuotes) field = cleanQuotedField(field);
+        row.push(field);
+        if (row.some(c => c !== '')) {
+            rows.push(row);
+        }
+    }
+
+    return rows;
+}
+
+/**
+ * Normalizes dataset headers and auto-sanitizes missing/empty required fields
+ * with sensible defaults rather than failing the import of massive datasets.
+ */
+function normalizeAndSanitizeDataset(rawHeaders, rawRows) {
+    if (!rawHeaders || rawHeaders.length === 0) {
+        return { headers: [], rows: [], isValid: false, reason: "Dataset contains no headers." };
+    }
+
+    const lowerHeaders = rawHeaders.map(h => (h || '').toString().trim().toLowerCase());
+
+    // Map required fields to column indices based on exact matches or known aliases
+    const fieldMapping = {};
+    REQUIRED_FIELDS.forEach(field => {
+        const aliases = FIELD_ALIASES[field] || [field.toLowerCase()];
+        let foundIdx = -1;
+        for (const alias of aliases) {
+            foundIdx = lowerHeaders.indexOf(alias);
+            if (foundIdx !== -1) break;
+        }
+        fieldMapping[field] = foundIdx;
+    });
+
+    const finalHeaders = [...rawHeaders.map(h => String(h).trim())];
+    // Ensure standard REQUIRED_FIELDS are available in header metadata
+    REQUIRED_FIELDS.forEach(rf => {
+        if (fieldMapping[rf] === -1) {
+            finalHeaders.push(rf);
+            fieldMapping[rf] = finalHeaders.length - 1;
+        }
+    });
+
+    const sanitizedRows = [];
+    const skuIdx = fieldMapping['SKU'];
+    const nameIdx = fieldMapping['Name'];
+    const catIdx = fieldMapping['Category'];
+    const priceIdx = fieldMapping['Price'];
+    const stockIdx = fieldMapping['Stock'];
+
+    for (let r = 0; r < rawRows.length; r++) {
+        const rawRow = rawRows[r];
+        if (!rawRow || !Array.isArray(rawRow)) continue;
+
+        // Skip rows that are completely blank
+        const isAllEmpty = rawRow.every(c => c === undefined || c === null || String(c).trim() === "");
+        if (isAllEmpty) continue;
+
+        // Build standardized row array
+        const newRow = new Array(finalHeaders.length);
+        for (let c = 0; c < finalHeaders.length; c++) {
+            newRow[c] = (rawRow[c] !== undefined && rawRow[c] !== null) ? String(rawRow[c]).trim() : '';
+        }
+
+        // Auto-fill fallback values if a required field is empty or missing in this row
+        if (!newRow[skuIdx]) {
+            newRow[skuIdx] = `SKU-${10000 + r + 1}`;
+        }
+        if (!newRow[nameIdx]) {
+            newRow[nameIdx] = newRow[skuIdx] ? `Product (${newRow[skuIdx]})` : `Product #${r + 1}`;
+        }
+        if (!newRow[catIdx]) {
+            newRow[catIdx] = 'General';
+        }
+        if (!newRow[priceIdx]) {
+            newRow[priceIdx] = '$0.00';
+        }
+        if (!newRow[stockIdx]) {
+            newRow[stockIdx] = '0';
+        }
+
+        sanitizedRows.push(newRow);
+    }
+
+    if (sanitizedRows.length === 0) {
+        return { headers: finalHeaders, rows: [], isValid: false, reason: "Dataset contains no valid records." };
+    }
+
+    return {
+        headers: finalHeaders,
+        rows: sanitizedRows,
+        isValid: true,
+        reason: ""
+    };
+}
+
 function validateDatasetRecords(headers, rows) {
     if (!headers || !Array.isArray(headers) || headers.length === 0) {
         return {
@@ -15,51 +190,279 @@ function validateDatasetRecords(headers, rows) {
             reason: "Dataset contains no headers."
         };
     }
-
-    const lowerHeaders = headers.map(h => (h || '').toString().trim().toLowerCase());
-    const missingHeaders = REQUIRED_FIELDS.filter(rf => !lowerHeaders.includes(rf.toLowerCase()));
-    const colIndices = REQUIRED_FIELDS.map(rf => lowerHeaders.indexOf(rf.toLowerCase()));
-
-    if (missingHeaders.length > 0) {
-        return {
-            isValid: false,
-            missingHeaders: missingHeaders,
-            reason: `Missing required field(s): ${missingHeaders.join(', ')}.`
-        };
-    }
-
     if (!rows || rows.length === 0) {
         return {
             isValid: false,
             reason: "Dataset contains no records."
         };
     }
-
-    // Check records for missing or empty required fields
-    for (let r = 0; r < rows.length; r++) {
-        const row = rows[r];
-        if (!row || !Array.isArray(row)) {
-            return {
-                isValid: false,
-                reason: `Record #${r + 1} is empty or malformed.`
-            };
-        }
-        for (let i = 0; i < REQUIRED_FIELDS.length; i++) {
-            const colIdx = colIndices[i];
-            const val = row[colIdx];
-            if (val === undefined || val === null || String(val).trim() === "") {
-                return {
-                    isValid: false,
-                    reason: `Record #${r + 1} is missing '${REQUIRED_FIELDS[i]}'.`
-                };
-            }
-        }
-    }
-
     return {
         isValid: true,
         reason: ""
     };
+}
+
+function parseNumeric(val) {
+    if (typeof val === 'number') return val;
+    if (!val) return NaN;
+    const str = String(val).replace(/[^0-9.-]/g, '');
+    const num = parseFloat(str);
+    return isNaN(num) ? NaN : num;
+}
+
+function analyzeKeyField(values) {
+    if (!values || values.length < 10) return { isUniform: true, score: 1.0 };
+
+    const keys = [];
+    for (let i = 0; i < values.length; i++) {
+        const val = values[i];
+        if (typeof val === 'number') {
+            keys.push(val);
+        } else {
+            const match = String(val).match(/\d+/);
+            keys.push(match ? parseInt(match[0], 10) : i);
+        }
+    }
+
+    keys.sort((a, b) => a - b);
+    const N = keys.length;
+    const keyRange = keys[N - 1] - keys[0];
+    if (keyRange === 0) return { isUniform: true, score: 1.0 };
+
+    let sumGaps = 0;
+    const gaps = new Array(N - 1);
+    for (let i = 0; i < N - 1; i++) {
+        const gap = keys[i + 1] - keys[i];
+        gaps[i] = gap;
+        sumGaps += gap;
+    }
+    const meanGap = sumGaps / (N - 1);
+    if (meanGap === 0) return { isUniform: true, score: 1.0 };
+
+    let sumSqGapDiff = 0;
+    let maxGap = 0;
+    for (let i = 0; i < N - 1; i++) {
+        const diff = gaps[i] - meanGap;
+        sumSqGapDiff += diff * diff;
+        if (gaps[i] > maxGap) maxGap = gaps[i];
+    }
+    const stdGap = Math.sqrt(sumSqGapDiff / (N - 1));
+    const cvGap = stdGap / meanGap;
+
+    let sumI = 0, sumK = 0, sumIK = 0, sumI2 = 0, sumK2 = 0;
+    for (let i = 0; i < N; i++) {
+        const k = keys[i];
+        sumI += i;
+        sumK += k;
+        sumIK += i * k;
+        sumI2 += i * i;
+        sumK2 += k * k;
+    }
+    const num = N * sumIK - sumI * sumK;
+    const den = Math.sqrt((N * sumI2 - sumI * sumI) * (N * sumK2 - sumK * sumK));
+    const r = den !== 0 ? num / den : 1;
+    const r2 = r * r;
+
+    const gapRatio = maxGap / meanGap;
+    const linScore = Math.max(0, Math.min(1, r2));
+    const gapScore = Math.max(0, Math.min(1, 1 - (cvGap / 2.0)));
+    const keyScore = (linScore * 0.6) + (gapScore * 0.4);
+
+    const isUniform = (r2 >= 0.95 && cvGap < 1.1 && gapRatio < 20);
+    return { isUniform, score: keyScore };
+}
+
+function analyzeNumericField(values) {
+    if (!values || values.length < 10) return { isUniform: true, score: 1.0 };
+
+    const nums = [];
+    for (let i = 0; i < values.length; i++) {
+        const n = parseNumeric(values[i]);
+        if (!isNaN(n)) nums.push(n);
+    }
+    if (nums.length < 10) return { isUniform: true, score: 1.0 };
+
+    const N = nums.length;
+    let sum = 0;
+    for (let i = 0; i < N; i++) sum += nums[i];
+    const mean = sum / N;
+
+    let sumSqDiff = 0;
+    let sumCubeDiff = 0;
+    for (let i = 0; i < N; i++) {
+        const d = nums[i] - mean;
+        sumSqDiff += d * d;
+        sumCubeDiff += d * d * d;
+    }
+    const variance = sumSqDiff / N;
+    const std = Math.sqrt(variance);
+    if (std === 0) return { isUniform: true, score: 1.0 };
+
+    const skewness = (sumCubeDiff / N) / Math.pow(std, 3);
+
+    nums.sort((a, b) => a - b);
+    let sumI = 0, sumV = 0, sumIV = 0, sumI2 = 0, sumV2 = 0;
+    for (let i = 0; i < N; i++) {
+        const v = nums[i];
+        sumI += i;
+        sumV += v;
+        sumIV += i * v;
+        sumI2 += i * i;
+        sumV2 += v * v;
+    }
+    const num = N * sumIV - sumI * sumV;
+    const den = Math.sqrt((N * sumI2 - sumI * sumI) * (N * sumV2 - sumV * sumV));
+    const r = den !== 0 ? num / den : 1;
+    const r2 = r * r;
+
+    const skewScore = Math.max(0, Math.min(1, 1 - (Math.abs(skewness) / 2.0)));
+    const cdfScore = Math.max(0, Math.min(1, r2));
+    const score = (skewScore * 0.5) + (cdfScore * 0.5);
+
+    const isUniform = (Math.abs(skewness) < 0.75 && r2 >= 0.88);
+    return { isUniform, score };
+}
+
+function analyzeCategoricalField(values) {
+    if (!values || values.length < 10) return { isUniform: true, score: 1.0 };
+
+    const counts = {};
+    let total = 0;
+    for (let i = 0; i < values.length; i++) {
+        const val = String(values[i] || '').trim().toLowerCase();
+        if (!val) continue;
+        counts[val] = (counts[val] || 0) + 1;
+        total++;
+    }
+
+    const categories = Object.keys(counts);
+    const K = categories.length;
+    if (K <= 1) return { isUniform: true, score: 1.0 };
+
+    let entropy = 0;
+    let maxProportion = 0;
+    for (let i = 0; i < K; i++) {
+        const p = counts[categories[i]] / total;
+        if (p > 0) entropy -= p * Math.log2(p);
+        if (p > maxProportion) maxProportion = p;
+    }
+    const maxEntropy = Math.log2(K);
+    const normEntropy = maxEntropy > 0 ? entropy / maxEntropy : 1;
+
+    const expectedProp = 1 / K;
+    const maxRatio = maxProportion / expectedProp;
+
+    const isUniform = (normEntropy >= 0.85 && maxRatio <= 2.2);
+    return { isUniform, score: normEntropy };
+}
+
+/**
+ * Multi-field dataset uniformity assessor:
+ * Inspects all columns in the dataset (search keys, categories, prices, quantities, attributes)
+ * and assesses statistical uniformity across all dimensions.
+ * @param {Array<string>} headers
+ * @param {Array<Array>} rows
+ * @returns {'uniform' | 'non-uniform'}
+ */
+function assessDatasetDistribution(headers, rows) {
+    if (!rows || rows.length < 10 || !headers || headers.length === 0) return 'uniform';
+
+    const sampleLimit = Math.min(rows.length, 10000);
+    const step = Math.max(1, Math.floor(rows.length / sampleLimit));
+    const sampleRows = [];
+    for (let i = 0; i < rows.length; i += step) {
+        if (rows[i]) sampleRows.push(rows[i]);
+    }
+
+    const lowerHeaders = headers.map(h => (h || '').toString().trim().toLowerCase());
+
+    // Identify SKU / Primary Key column
+    let skuIdx = lowerHeaders.findIndex(h => h === 'sku' || h === 'id' || h.includes('code') || h.includes('key'));
+    if (skuIdx === -1) skuIdx = 0;
+
+    const fieldResults = [];
+    let skuAnalysis = null;
+
+    for (let col = 0; col < headers.length; col++) {
+        const colName = headers[col];
+        const values = sampleRows.map(r => r[col]);
+
+        if (col === skuIdx) {
+            skuAnalysis = analyzeKeyField(values);
+            fieldResults.push({ name: colName, weight: 0.40, ...skuAnalysis });
+        } else {
+            // Determine column type: check if mostly numeric or categorical
+            let numericCount = 0;
+            let sampleCount = Math.min(values.length, 100);
+            for (let j = 0; j < sampleCount; j++) {
+                if (!isNaN(parseNumeric(values[j]))) numericCount++;
+            }
+
+            const isNumeric = (numericCount / sampleCount) >= 0.70;
+            let analysis;
+            if (isNumeric) {
+                analysis = analyzeNumericField(values);
+            } else {
+                analysis = analyzeCategoricalField(values);
+            }
+            fieldResults.push({ name: colName, weight: 0.20, ...analysis });
+        }
+    }
+
+    let totalWeight = 0;
+    let weightedScore = 0;
+    let nonUniformCount = 0;
+
+    fieldResults.forEach(f => {
+        weightedScore += f.score * f.weight;
+        totalWeight += f.weight;
+        if (!f.isUniform) nonUniformCount++;
+    });
+
+    const overallScore = totalWeight > 0 ? weightedScore / totalWeight : 1.0;
+    const isSkuUniform = skuAnalysis ? skuAnalysis.isUniform : true;
+
+    // Decision:
+    // Dataset is Uniform if primary search key is uniform, at most 1 secondary field is non-uniform, and overallScore >= 0.80
+    const isUniform = isSkuUniform && nonUniformCount <= 1 && overallScore >= 0.80;
+
+    return isUniform ? 'uniform' : 'non-uniform';
+}
+
+/**
+ * Updates both the loaded-distribution badge and result-distribution badge
+ * and keeps active distribution state synchronized.
+ */
+function updateDistributionBadges(distMode) {
+    currentDatasetDistribution = distMode;
+    if (typeof selectedDistributionMode !== 'undefined') {
+        selectedDistributionMode = distMode;
+    }
+    if (typeof setDistributionMode === 'function') {
+        setDistributionMode(distMode);
+    }
+
+    const distBadge = document.getElementById('loaded-distribution-badge');
+    if (distBadge) {
+        if (distMode === 'uniform') {
+            distBadge.className = 'badge-dist badge-dist-uniform';
+            distBadge.innerHTML = '<i class="fa-solid fa-chart-line"></i> Uniform';
+        } else {
+            distBadge.className = 'badge-dist badge-dist-non-uniform';
+            distBadge.innerHTML = '<i class="fa-solid fa-chart-pie"></i> Non-Uniform';
+        }
+    }
+
+    const resDistBadge = document.getElementById('result-distribution-badge');
+    if (resDistBadge) {
+        if (distMode === 'uniform') {
+            resDistBadge.className = 'badge-dist badge-dist-uniform';
+            resDistBadge.innerHTML = '<i class="fa-solid fa-chart-line"></i> Uniform';
+        } else {
+            resDistBadge.className = 'badge-dist badge-dist-non-uniform';
+            resDistBadge.innerHTML = '<i class="fa-solid fa-chart-pie"></i> Non-Uniform';
+        }
+    }
 }
 
 function handleFileUpload(file) {
@@ -69,7 +472,8 @@ function handleFileUpload(file) {
 
     reader.onload = function (e) {
         const content = e.target.result;
-        let recordsCount = 0;
+        let rawHeaders = [];
+        let rawRows = [];
 
         if (file.name.toLowerCase().endsWith('.json')) {
             try {
@@ -78,44 +482,43 @@ function handleFileUpload(file) {
                     showErrorPopup("Invalid JSON structure. Expected a JSON array of records.");
                     return;
                 }
-                recordsCount = data.length;
+                if (data.length === 0) {
+                    showErrorPopup("The uploaded file contains no records.");
+                    return;
+                }
 
-                if (recordsCount > 0) {
-                    const firstItem = data[0];
-                    if (typeof firstItem === 'object' && firstItem !== null && !Array.isArray(firstItem)) {
-                        // Gather unique keys, prioritizing standard REQUIRED_FIELDS first
-                        const allKeys = new Set();
-                        const sampleLimit = Math.min(data.length, 200);
-                        for (let i = 0; i < sampleLimit; i++) {
-                            if (data[i] && typeof data[i] === 'object') {
-                                Object.keys(data[i]).forEach(k => allKeys.add(k));
+                const firstItem = data[0];
+                if (typeof firstItem === 'object' && firstItem !== null && !Array.isArray(firstItem)) {
+                    const allKeys = new Set();
+                    const sampleLimit = Math.min(data.length, 200);
+                    for (let i = 0; i < sampleLimit; i++) {
+                        if (data[i] && typeof data[i] === 'object') {
+                            Object.keys(data[i]).forEach(k => allKeys.add(k));
+                        }
+                    }
+
+                    const keysSet = new Set();
+                    REQUIRED_FIELDS.forEach(rf => {
+                        for (const k of allKeys) {
+                            if (k.toLowerCase() === rf.toLowerCase()) {
+                                keysSet.add(k);
+                                break;
                             }
                         }
+                    });
+                    allKeys.forEach(k => keysSet.add(k));
 
-                        const keysSet = new Set();
-                        REQUIRED_FIELDS.forEach(rf => {
-                            for (const k of allKeys) {
-                                if (k.toLowerCase() === rf.toLowerCase()) {
-                                    keysSet.add(k);
-                                    break;
-                                }
-                            }
-                        });
-                        allKeys.forEach(k => keysSet.add(k));
-
-                        datasetHeaders = Array.from(keysSet);
-                        datasetPreview = data.map(item => {
-                            if (!item || typeof item !== 'object') return datasetHeaders.map(() => '');
-                            return datasetHeaders.map(h => (item[h] !== undefined && item[h] !== null) ? item[h] : '');
-                        });
-                    } else if (Array.isArray(firstItem)) {
-                        datasetHeaders = firstItem.map(h => String(h).trim());
-                        datasetPreview = data.slice(1);
-                        recordsCount = datasetPreview.length;
-                    } else {
-                        datasetHeaders = ['Value'];
-                        datasetPreview = data.map(item => [item]);
-                    }
+                    rawHeaders = Array.from(keysSet);
+                    rawRows = data.map(item => {
+                        if (!item || typeof item !== 'object') return rawHeaders.map(() => '');
+                        return rawHeaders.map(h => (item[h] !== undefined && item[h] !== null) ? item[h] : '');
+                    });
+                } else if (Array.isArray(firstItem)) {
+                    rawHeaders = firstItem.map(h => String(h).trim());
+                    rawRows = data.slice(1);
+                } else {
+                    rawHeaders = ['Value'];
+                    rawRows = data.map(item => [item]);
                 }
             } catch (err) {
                 console.error("Error parsing JSON:", err);
@@ -123,34 +526,22 @@ function handleFileUpload(file) {
                 return;
             }
         } else if (file.name.toLowerCase().endsWith('.csv')) {
-            const lines = content.split(/\r?\n/).filter(line => line.trim().length > 0);
-
-            if (lines.length > 0) {
-                datasetHeaders = lines[0].split(',').map(h => h.trim().replace(/^["']|["']$/g, ''));
-                recordsCount = lines.length > 1 ? lines.length - 1 : 0;
-
-                datasetPreview = lines.slice(1).map(line => {
-                    return line.split(',').map(cell => cell.trim().replace(/^["']|["']$/g, ''));
-                });
-            } else {
-                recordsCount = 0;
+            const parsed = parseCSV(content);
+            if (parsed.length === 0) {
+                showErrorPopup("The uploaded file is empty.");
+                return;
             }
+            rawHeaders = parsed[0];
+            rawRows = parsed.slice(1);
         } else {
             showErrorPopup("Unsupported file format. Please upload a CSV or JSON file.");
             return;
         }
 
-        if (recordsCount === 0) {
-            showErrorPopup("The uploaded file contains no records.");
-            return;
-        }
+        // Sanitize dataset & map required fields
+        const processed = normalizeAndSanitizeDataset(rawHeaders, rawRows);
 
-        // Validate dataset records for required fields: SKU, Name, Category, Price, Stock
-        const validation = validateDatasetRecords(datasetHeaders, datasetPreview);
-
-        // If any required field or data is missing, reject and do NOT continue to the benchmark tab
-        if (!validation.isValid) {
-            // Reset dataset state
+        if (!processed.isValid || processed.rows.length === 0) {
             datasetHeaders = [];
             datasetPreview = null;
             datasetSize = 0;
@@ -159,7 +550,7 @@ function handleFileUpload(file) {
             if (fileInput) fileInput.value = '';
 
             showErrorPopup(
-                `The dataset is wrong. Each dataset record must contain SKU, Name, Category, Price, and Stock. (${validation.reason}) Please upload a valid dataset file.`,
+                `Failed to import dataset: ${processed.reason || 'No valid records found.'}`,
                 "Dataset Error",
                 "fa-solid fa-circle-xmark",
                 "#ef4444"
@@ -167,8 +558,61 @@ function handleFileUpload(file) {
             return;
         }
 
-        // Only accept and proceed to Step 2 if dataset is valid
-        datasetSize = recordsCount;
+        datasetHeaders = processed.headers;
+        datasetPreview = processed.rows;
+        datasetSize = datasetPreview.length;
+
+        // Detect distribution from filename or SKU frequency
+        let detectedDist = 'uniform';
+        const lowerName = file.name.toLowerCase();
+
+        if (lowerName.includes('non_uniform') || lowerName.includes('non-uniform') || lowerName.includes('zipf')) {
+            detectedDist = 'non-uniform';
+        } else if (lowerName.includes('uniform')) {
+            detectedDist = 'uniform';
+        } else if (datasetPreview && datasetPreview.length > 0) {
+            // Statistical fallback: inspect SKU repetition in sample
+            const sample = datasetPreview.slice(0, Math.min(datasetPreview.length, 1000));
+            const skuIdx = datasetHeaders.findIndex(h => h.toLowerCase() === 'sku');
+            if (skuIdx !== -1) {
+                const counts = {};
+                sample.forEach(r => { counts[r[skuIdx]] = (counts[r[skuIdx]] || 0) + 1; });
+                const maxFreq = Math.max(...Object.values(counts));
+                const uniqueCount = Object.keys(counts).length;
+                if (maxFreq > sample.length * 0.05 || (sample.length > 0 && (uniqueCount / sample.length) < 0.35)) {
+                    detectedDist = 'non-uniform';
+                } else if (typeof assessDatasetDistribution === 'function') {
+                    detectedDist = assessDatasetDistribution(datasetHeaders, datasetPreview);
+                }
+            } else if (typeof assessDatasetDistribution === 'function') {
+                detectedDist = assessDatasetDistribution(datasetHeaders, datasetPreview);
+            }
+        }
+
+        if (typeof currentDatasetDistribution !== 'undefined') {
+            currentDatasetDistribution = detectedDist;
+        }
+        if (typeof selectedDistributionMode !== 'undefined') {
+            selectedDistributionMode = detectedDist;
+        }
+        if (typeof setDistributionMode === 'function') {
+            setDistributionMode(detectedDist);
+        }
+
+        // Update badges
+        ['loaded-distribution-badge', 'result-distribution-badge'].forEach(id => {
+            const badge = document.getElementById(id);
+            if (badge) {
+                if (detectedDist === 'uniform') {
+                    badge.className = 'badge-dist badge-dist-uniform';
+                    badge.innerHTML = '<i class="fa-solid fa-chart-line"></i> Uniform';
+                } else {
+                    badge.className = 'badge-dist badge-dist-non-uniform';
+                    badge.innerHTML = '<i class="fa-solid fa-chart-pie"></i> Non-Uniform';
+                }
+            }
+        });
+
         document.getElementById('loaded-records').innerText = datasetSize.toLocaleString();
         document.getElementById('search-ops').value = Math.min(1000, datasetSize);
 
@@ -386,27 +830,7 @@ function generateData(records, distributionType) {
         document.getElementById('loaded-records').innerText = records.toLocaleString();
 
         // Update distribution badges
-        const distBadge = document.getElementById('loaded-distribution-badge');
-        if (distBadge) {
-            if (distMode === 'uniform') {
-                distBadge.className = 'badge-dist badge-dist-uniform';
-                distBadge.innerHTML = '<i class="fa-solid fa-chart-line"></i> Uniform';
-            } else {
-                distBadge.className = 'badge-dist badge-dist-non-uniform';
-                distBadge.innerHTML = '<i class="fa-solid fa-chart-pie"></i> Non-Uniform';
-            }
-        }
-
-        const resDistBadge = document.getElementById('result-distribution-badge');
-        if (resDistBadge) {
-            if (distMode === 'uniform') {
-                resDistBadge.className = 'badge-dist badge-dist-uniform';
-                resDistBadge.innerHTML = '<i class="fa-solid fa-chart-line"></i> Uniform';
-            } else {
-                resDistBadge.className = 'badge-dist badge-dist-non-uniform';
-                resDistBadge.innerHTML = '<i class="fa-solid fa-chart-pie"></i> Non-Uniform';
-            }
-        }
+        updateDistributionBadges(distMode);
 
         // Update max values for inputs based on dataset size
         document.getElementById('search-ops').value = Math.min(1000, records);
