@@ -132,12 +132,14 @@ function cleanQuotedField(val) {
 
 /**
  * Fast RFC-4180 compliant CSV parser capable of streaming through large (1M+ rows) datasets.
- * Properly handles quoted fields, escaped quotes (""), newlines inside quotes, and UTF-8 BOM.
+ * Robustly distinguishes genuine quoted fields ("...") from literal unescaped quotes (e.g. 24" Monitor),
+ * escaped quotes (""), newlines inside quotes, and UTF-8 BOM.
  */
 function parseCSV(text) {
     if (!text || text.length === 0) return [];
 
     let i = 0;
+    // Skip UTF-8 BOM if present
     if (text.charCodeAt(0) === 0xFEFF) {
         i = 1;
     }
@@ -147,60 +149,101 @@ function parseCSV(text) {
     let row = [];
     let fieldStart = i;
     let inQuotes = false;
-    let hasQuotes = false;
 
     while (i < len) {
         const code = text.charCodeAt(i);
 
-        if (code === 34) { // '"'
-            hasQuotes = true;
-            if (inQuotes && i + 1 < len && text.charCodeAt(i + 1) === 34) {
-                // Escaped quote ""
-                i += 2;
-                continue;
-            }
-            inQuotes = !inQuotes;
-            i++;
-            continue;
-        }
-
         if (!inQuotes) {
+            // Check if this field genuinely starts with an opening quote
+            if (i === fieldStart) {
+                let p = i;
+                while (p < len && (text.charCodeAt(p) === 32 || text.charCodeAt(p) === 9)) {
+                    p++;
+                }
+                if (p < len && text.charCodeAt(p) === 34) { // '"'
+                    inQuotes = true;
+                    i = p + 1;
+                    fieldStart = i;
+                    continue;
+                }
+            }
+
             if (code === 44) { // ','
                 let field = text.slice(fieldStart, i).trim();
-                if (hasQuotes) field = cleanQuotedField(field);
                 row.push(field);
-                fieldStart = i + 1;
-                hasQuotes = false;
                 i++;
+                fieldStart = i;
                 continue;
             }
 
             if (code === 10 || code === 13) { // '\n' or '\r'
                 let field = text.slice(fieldStart, i).trim();
-                if (hasQuotes) field = cleanQuotedField(field);
                 row.push(field);
 
                 if (code === 13 && i + 1 < len && text.charCodeAt(i + 1) === 10) {
                     i++;
                 }
+                i++;
 
                 if (row.some(c => c !== '')) {
                     rows.push(row);
                 }
                 row = [];
-                fieldStart = i + 1;
-                hasQuotes = false;
-                i++;
+                fieldStart = i;
                 continue;
+            }
+        } else {
+            // We are inside a quoted field
+            if (code === 34) { // '"'
+                if (i + 1 < len && text.charCodeAt(i + 1) === 34) {
+                    // Escaped quote "" inside quoted field
+                    i += 2;
+                    continue;
+                }
+
+                // Closing quote found
+                inQuotes = false;
+                let field = text.slice(fieldStart, i).replace(/""/g, '"').trim();
+                row.push(field);
+
+                // Skip any trailing spaces after closing quote until next delimiter or newline
+                i++;
+                while (i < len && (text.charCodeAt(i) === 32 || text.charCodeAt(i) === 9)) {
+                    i++;
+                }
+
+                if (i < len && text.charCodeAt(i) === 44) { // ','
+                    i++;
+                    fieldStart = i;
+                    continue;
+                } else if (i < len && (text.charCodeAt(i) === 10 || text.charCodeAt(i) === 13)) { // newline
+                    if (text.charCodeAt(i) === 13 && i + 1 < len && text.charCodeAt(i + 1) === 10) {
+                        i++;
+                    }
+                    i++;
+                    if (row.some(c => c !== '')) {
+                        rows.push(row);
+                    }
+                    row = [];
+                    fieldStart = i;
+                    continue;
+                } else {
+                    fieldStart = i;
+                    continue;
+                }
             }
         }
 
         i++;
     }
 
+    // Flush last field / row
     if (fieldStart < len || row.length > 0) {
         let field = text.slice(fieldStart, len).trim();
-        if (hasQuotes) field = cleanQuotedField(field);
+        if (inQuotes && field.endsWith('"')) {
+            field = field.slice(0, -1);
+        }
+        field = field.replace(/""/g, '"').trim();
         row.push(field);
         if (row.some(c => c !== '')) {
             rows.push(row);
@@ -674,30 +717,33 @@ function handleFileUpload(file) {
         datasetPreview = processed.rows;
         datasetSize = datasetPreview.length;
 
-        // Detect distribution from filename or SKU frequency
+        // Detect distribution from filename or statistical assessment
         let detectedDist = 'uniform';
         const lowerName = file.name.toLowerCase();
 
-        if (lowerName.includes('non_uniform') || lowerName.includes('non-uniform') || lowerName.includes('zipf')) {
+        const isNonUniformName = /non[\s_-]?uniform|zipf|skewed|exponential|powerlaw|cluster|pareto/i.test(lowerName);
+        const isUniformName = !isNonUniformName && (/(?:^|[\s_-])uniform(?:[\s_-]|\.|$)/i.test(lowerName) || lowerName.includes('uniform'));
+
+        if (isNonUniformName) {
             detectedDist = 'non-uniform';
-        } else if (lowerName.includes('uniform')) {
+        } else if (isUniformName) {
             detectedDist = 'uniform';
         } else if (datasetPreview && datasetPreview.length > 0) {
-            // Statistical fallback: inspect SKU repetition in sample
-            const sample = datasetPreview.slice(0, Math.min(datasetPreview.length, 1000));
-            const skuIdx = datasetHeaders.findIndex(h => h.toLowerCase() === 'sku');
-            if (skuIdx !== -1) {
-                const counts = {};
-                sample.forEach(r => { counts[r[skuIdx]] = (counts[r[skuIdx]] || 0) + 1; });
-                const maxFreq = Math.max(...Object.values(counts));
-                const uniqueCount = Object.keys(counts).length;
-                if (maxFreq > sample.length * 0.05 || (sample.length > 0 && (uniqueCount / sample.length) < 0.35)) {
-                    detectedDist = 'non-uniform';
-                } else if (typeof assessDatasetDistribution === 'function') {
-                    detectedDist = assessDatasetDistribution(datasetHeaders, datasetPreview);
-                }
-            } else if (typeof assessDatasetDistribution === 'function') {
+            // Statistical assessment on loaded dataset
+            if (typeof assessDatasetDistribution === 'function') {
                 detectedDist = assessDatasetDistribution(datasetHeaders, datasetPreview);
+            } else {
+                const sample = datasetPreview.slice(0, Math.min(datasetPreview.length, 1000));
+                const skuIdx = datasetHeaders.findIndex(h => h.toLowerCase() === 'sku');
+                if (skuIdx !== -1) {
+                    const counts = {};
+                    sample.forEach(r => { counts[r[skuIdx]] = (counts[r[skuIdx]] || 0) + 1; });
+                    const maxFreq = Math.max(...Object.values(counts));
+                    const uniqueCount = Object.keys(counts).length;
+                    if (maxFreq > sample.length * 0.05 || (sample.length > 0 && (uniqueCount / sample.length) < 0.35)) {
+                        detectedDist = 'non-uniform';
+                    }
+                }
             }
         }
 
