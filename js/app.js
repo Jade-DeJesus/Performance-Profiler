@@ -12,6 +12,7 @@ let currentPreviewPage = 1; // Track the current page in the dataset modal
 const previewRowsPerPage = 100; // Only display 100 rows per page to prevent browser freeze
 let selectedDistributionMode = 'uniform'; // 'uniform' | 'non-uniform' for synthetic generator
 let currentDatasetDistribution = 'uniform'; // Active loaded dataset distribution
+let preIndexedNumericKeys = null; // Pre-computed Float64Array of sorted numeric keys
 
 // Distribution Selector Mode Switcher
 function setDistributionMode(mode) {

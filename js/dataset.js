@@ -19,6 +19,75 @@ function cleanQuotedField(val) {
 }
 
 /**
+ * Pre-Indexes string keys to pure numeric representations (e.g. integer or FNV-1a hash)
+ * once during dataset import or initialization, eliminating runtime parsing inside search loops.
+ */
+function stringToNumericKey(val) {
+    if (typeof val === 'number') return isFinite(val) ? val : 0;
+    if (val === null || val === undefined) return 0;
+    const str = String(val).trim();
+    if (!str) return 0;
+
+    // 1. Direct numeric or numeric string (e.g. "10025", "10025.5")
+    const num = Number(str);
+    if (!isNaN(num) && isFinite(num)) {
+        return num;
+    }
+
+    // 2. Alphanumeric SKU containing digits (e.g. "SKU-10025", "ITEM#984")
+    const digitMatch = str.match(/\d+/);
+    if (digitMatch) {
+        const parsed = parseInt(digitMatch[0], 10);
+        if (!isNaN(parsed) && isFinite(parsed)) {
+            return parsed;
+        }
+    }
+
+    // 3. Arbitrary non-numeric string: deterministic 32-bit FNV-1a hash
+    let hash = 2166136261;
+    for (let i = 0; i < str.length; i++) {
+        hash ^= str.charCodeAt(i);
+        hash = Math.imul(hash, 16777619);
+    }
+    return hash >>> 0;
+}
+
+/**
+ * Converts all dataset string keys into a sorted Float64Array once during import / generation.
+ * Enables search and interpolation algorithms to operate strictly on numeric arrays.
+ */
+function preIndexDatasetKeys() {
+    if (!datasetPreview || datasetPreview.length === 0) {
+        preIndexedNumericKeys = null;
+        if (typeof cachedSortedKeys !== 'undefined') cachedSortedKeys = null;
+        if (typeof cachedDatasetSource !== 'undefined') cachedDatasetSource = null;
+        return null;
+    }
+
+    let skuIndex = datasetHeaders.findIndex(h => h && h.toLowerCase() === 'sku');
+    if (skuIndex === -1) skuIndex = 0;
+
+    const len = datasetPreview.length;
+    const keys = new Float64Array(len);
+
+    for (let i = 0; i < len; i++) {
+        const row = datasetPreview[i];
+        const cell = (row && row[skuIndex] !== undefined && row[skuIndex] !== null) ? row[skuIndex] : '';
+        keys[i] = stringToNumericKey(cell);
+    }
+
+    // Sort numeric keys for binary and interpolation search
+    keys.sort();
+
+    preIndexedNumericKeys = keys;
+    if (typeof cachedSortedKeys !== 'undefined') {
+        cachedSortedKeys = keys;
+        cachedDatasetSource = datasetPreview;
+    }
+    return preIndexedNumericKeys;
+}
+
+/**
  * Fast RFC-4180 compliant CSV parser capable of streaming through large (1M+ rows) datasets.
  * Robustly distinguishes genuine quoted fields ("...") from literal unescaped quotes (e.g. 24" Monitor),
  * escaped quotes (""), newlines inside quotes, and UTF-8 BOM.
@@ -605,6 +674,9 @@ function handleFileUpload(file) {
         datasetPreview = processed.rows;
         datasetSize = datasetPreview.length;
 
+        // Pre-Index string keys into numeric values upfront once during import
+        preIndexDatasetKeys();
+
         // Detect distribution from filename or statistical assessment
         let detectedDist = 'uniform';
         const lowerName = file.name.toLowerCase();
@@ -856,6 +928,9 @@ function generateData(records, distributionType) {
             stock
         ];
     }
+
+    // Pre-Index string keys into numeric values upfront once during data generation
+    preIndexDatasetKeys();
 
     // Simulate generation time / visual feedback
     let btn = null;

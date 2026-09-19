@@ -9,99 +9,259 @@
  * 5. Async Event Loop Yields: Periodically yields execution to avoid locking the worker thread.
  */
 
-// --- Direct Array-Probing Search Algorithms (Optimized for Float64Array) ---
+// --- Direct Array-Probing Search Algorithms (Optimized for Float64Array with Infinite Loop & Stagnation Guards) ---
 
 function binarySearch(arr, key, low, high) {
+    if (low === undefined || low < 0) low = 0;
+    if (high === undefined || high >= arr.length) high = arr.length - 1;
+    if (low > high || arr.length === 0) return -1;
+
+    const n = high - low + 1;
+    const maxIterations = Math.max(100, Math.ceil(Math.log2(n + 1)) * 10);
+    let iterations = 0;
+
     while (low <= high) {
+        if (++iterations > maxIterations) break;
+
         const mid = (low + high) >> 1;
         const val = arr[mid];
+
         if (val === key) return mid;
-        if (val < key) low = mid + 1;
-        else high = mid - 1;
+
+        const prevLow = low;
+        const prevHigh = high;
+
+        if (val < key) {
+            low = mid + 1;
+        } else {
+            high = mid - 1;
+        }
+
+        if (low === prevLow && high === prevHigh) break;
     }
     return -1;
 }
 
 function interpBinarySearch(arr, key) {
-    let low = 0, high = arr.length - 1;
-    const lowVal = arr[low];
-    const highVal = arr[high];
-    if (low <= high && key >= lowVal && key <= highVal) {
-        if (lowVal === highVal) return lowVal === key ? low : -1;
-        const pos = low + Math.floor(((high - low) / (highVal - lowVal)) * (key - lowVal));
+    const n = arr.length;
+    if (n === 0) return -1;
+    let low = 0, high = n - 1;
+
+    if (key < arr[low] || key > arr[high]) return -1;
+    if (arr[low] === key) return low;
+    if (arr[high] === key) return high;
+    if (arr[high] === arr[low]) return arr[low] === key ? low : -1;
+
+    const maxIterations = Math.max(100, Math.ceil(Math.log2(n + 1)) * 10);
+    let iterations = 0;
+
+    while (low <= high && key >= arr[low] && key <= arr[high]) {
+        if (++iterations > maxIterations) break;
+
+        const lowVal = arr[low];
+        const highVal = arr[high];
+
+        if (lowVal === highVal || arr[high] === arr[low]) {
+            return lowVal === key ? low : -1;
+        }
+
+        const denom = highVal - lowVal;
+        if (denom === 0) return lowVal === key ? low : -1;
+
+        const pos = low + Math.floor(((high - low) / denom) * (key - lowVal));
+
+        if (isNaN(pos) || !isFinite(pos) || pos < low || pos > high) {
+            return binarySearch(arr, key, low, high);
+        }
+
         const posVal = arr[pos];
         if (posVal === key) return pos;
-        if (posVal < key) return binarySearch(arr, key, pos + 1, high);
-        else return binarySearch(arr, key, low, pos - 1);
+
+        if (posVal < key) {
+            return binarySearch(arr, key, pos + 1, high);
+        } else {
+            return binarySearch(arr, key, low, pos - 1);
+        }
     }
     return -1;
 }
 
 function fibonacciSearch(arr, key, low, high) {
+    if (low === undefined || low < 0) low = 0;
+    if (high === undefined || high >= arr.length) high = arr.length - 1;
+    if (low > high || arr.length === 0) return -1;
+
     const n = high - low + 1;
     if (n <= 0) return -1;
+
     let f2 = 0, f1 = 1, fM = 1;
-    while (fM < n) { f2 = f1; f1 = fM; fM = f2 + f1; }
+    while (fM < n) {
+        f2 = f1;
+        f1 = fM;
+        fM = f2 + f1;
+    }
+
     let offset = -1;
+    const maxIterations = Math.max(100, Math.ceil(Math.log2(n + 1)) * 10);
+    let iterations = 0;
+
     while (fM > 1) {
+        if (++iterations > maxIterations) break;
+
         const i = Math.min(offset + f2, n - 1);
-        const val = arr[low + i];
+        const idx = low + i;
+        if (idx < low || idx > high) break;
+
+        const val = arr[idx];
         if (val < key) {
-            fM = f1; f1 = f2; f2 = fM - f1;
+            fM = f1;
+            f1 = f2;
+            f2 = fM - f1;
             offset = i;
         } else if (val > key) {
-            fM = f2; f1 = f1 - f2; f2 = fM - f1;
-        } else return low + i;
+            fM = f2;
+            f1 = f1 - f2;
+            f2 = fM - f1;
+        } else {
+            return idx;
+        }
     }
-    if (f1 === 1 && offset + 1 < n && arr[low + offset + 1] === key) return low + offset + 1;
+
+    if (f1 === 1 && offset + 1 < n) {
+        const finalIdx = low + offset + 1;
+        if (finalIdx <= high && arr[finalIdx] === key) {
+            return finalIdx;
+        }
+    }
     return -1;
 }
 
 function interpFibonacciSearch(arr, key) {
-    let low = 0, high = arr.length - 1;
-    const lowVal = arr[low];
-    const highVal = arr[high];
-    if (low <= high && key >= lowVal && key <= highVal) {
-        if (lowVal === highVal) return lowVal === key ? low : -1;
-        const pos = low + Math.floor(((high - low) / (highVal - lowVal)) * (key - lowVal));
+    const n = arr.length;
+    if (n === 0) return -1;
+    let low = 0, high = n - 1;
+
+    if (key < arr[low] || key > arr[high]) return -1;
+    if (arr[low] === key) return low;
+    if (arr[high] === key) return high;
+    if (arr[high] === arr[low]) return arr[low] === key ? low : -1;
+
+    const maxIterations = Math.max(100, Math.ceil(Math.log2(n + 1)) * 10);
+    let iterations = 0;
+
+    while (low <= high && key >= arr[low] && key <= arr[high]) {
+        if (++iterations > maxIterations) break;
+
+        const lowVal = arr[low];
+        const highVal = arr[high];
+
+        if (lowVal === highVal || arr[high] === arr[low]) {
+            return lowVal === key ? low : -1;
+        }
+
+        const denom = highVal - lowVal;
+        if (denom === 0) return lowVal === key ? low : -1;
+
+        const pos = low + Math.floor(((high - low) / denom) * (key - lowVal));
+
+        if (isNaN(pos) || !isFinite(pos) || pos < low || pos > high) {
+            return fibonacciSearch(arr, key, low, high);
+        }
+
         const posVal = arr[pos];
         if (posVal === key) return pos;
-        if (posVal < key) return fibonacciSearch(arr, key, pos + 1, high);
-        else return fibonacciSearch(arr, key, low, pos - 1);
+
+        if (posVal < key) {
+            return fibonacciSearch(arr, key, pos + 1, high);
+        } else {
+            return fibonacciSearch(arr, key, low, pos - 1);
+        }
     }
     return -1;
 }
 
 function exponentialSearch(arr, key, low, high) {
-    if (low > high) return -1;
+    if (low === undefined || low < 0) low = 0;
+    if (high === undefined || high >= arr.length) high = arr.length - 1;
+    if (low > high || arr.length === 0) return -1;
     if (arr[low] === key) return low;
-    let bound = 1, n = high - low + 1;
-    while (bound < n && arr[low + bound] <= key) bound *= 2;
-    return binarySearch(arr, key, low + Math.floor(bound / 2), low + Math.min(bound, n - 1));
+
+    let bound = 1;
+    const n = high - low + 1;
+    const maxExpIters = Math.max(64, Math.ceil(Math.log2(n + 1)) * 4);
+    let expIters = 0;
+
+    while (bound < n && (low + bound) <= high && arr[low + bound] <= key) {
+        if (++expIters > maxExpIters) break;
+        bound *= 2;
+    }
+
+    const bLow = low + Math.floor(bound / 2);
+    const bHigh = low + Math.min(bound, n - 1);
+    return binarySearch(arr, key, bLow, bHigh);
 }
 
 function interpExponentialSearch(arr, key) {
     const n = arr.length;
     if (n === 0 || key < arr[0] || key > arr[n - 1]) return -1;
     if (arr[0] === key) return 0;
+    if (arr[n - 1] === key) return n - 1;
 
+    // Phase 1: Exponential interval expansion with safety limit
     let bound = 1;
+    const maxExpIters = Math.max(64, Math.ceil(Math.log2(n + 1)) * 4);
+    let expIters = 0;
+
     while (bound < n && arr[bound] < key) {
+        if (++expIters > maxExpIters) break;
         bound *= 2;
     }
 
     let bLow = Math.floor(bound / 2);
     let bHigh = Math.min(bound, n - 1);
 
+    // Phase 2: Interpolation search within the exponentially bounded bracket
+    const maxIterations = Math.max(100, Math.ceil(Math.log2(n + 1)) * 10);
+    let iterations = 0;
+
     while (bLow <= bHigh && key >= arr[bLow] && key <= arr[bHigh]) {
+        if (++iterations > maxIterations) break;
+
         const lowVal = arr[bLow];
         const highVal = arr[bHigh];
-        if (lowVal === highVal) return lowVal === key ? bLow : -1;
-        const pos = bLow + Math.floor(((bHigh - bLow) / (highVal - lowVal)) * (key - lowVal));
+
+        // Explicit boundary checks (low <= high, arr[high] !== arr[low]) to prevent division-by-zero
+        if (lowVal === highVal || arr[bHigh] === arr[bLow]) {
+            return lowVal === key ? bLow : -1;
+        }
+
+        const denom = highVal - lowVal;
+        if (denom === 0) return lowVal === key ? bLow : -1;
+
+        const pos = bLow + Math.floor(((bHigh - bLow) / denom) * (key - lowVal));
+
+        // Break immediately if position calculation is NaN, infinite, or outside bracket
+        if (isNaN(pos) || !isFinite(pos) || pos < bLow || pos > bHigh) {
+            break;
+        }
+
         const posVal = arr[pos];
         if (posVal === key) return pos;
-        if (posVal < key) bLow = pos + 1;
-        else bHigh = pos - 1;
+
+        // Stagnation guard: verify bounds actually narrow
+        const prevLow = bLow;
+        const prevHigh = bHigh;
+
+        if (posVal < key) {
+            bLow = pos + 1;
+        } else {
+            bHigh = pos - 1;
+        }
+
+        if (bLow === prevLow && bHigh === prevHigh) {
+            // Position calculations failed to narrow array bounds
+            break;
+        }
     }
     return -1;
 }
@@ -134,6 +294,7 @@ async function runBenchmark(payload) {
     const {
         keysBuffer,
         matchBuffer,
+        targetNumericKey = 0,
         searchTerm,
         searchOps,
         matchingCount = 0,
@@ -149,19 +310,26 @@ async function runBenchmark(payload) {
     const matchingKeys = new Float64Array(matchBuffer);
     const numMatchingKeys = matchingKeys.length;
 
-    if (keysArray.length === 0 || numMatchingKeys === 0) {
-        self.postMessage({ type: 'ERROR', message: `No matching records found for search term "${searchTerm}".` });
+    if (keysArray.length === 0) {
+        self.postMessage({ type: 'ERROR', message: "Dataset keys buffer is empty." });
         return;
     }
 
     postThrottledProgress(10, `Generating ${searchOps.toLocaleString()} query lookups...`, null, true);
     await yieldToEventLoop();
 
-    // Pre-allocate query keys buffer (Zero allocations during benchmarking)
+    // Pre-allocate query keys buffer (strictly numeric Float64Array)
     const queries = new Float64Array(searchOps);
-    for (let i = 0; i < searchOps; i++) {
-        const randIdx = Math.floor(Math.random() * numMatchingKeys);
-        queries[i] = matchingKeys[randIdx];
+    if (numMatchingKeys > 0) {
+        for (let i = 0; i < searchOps; i++) {
+            const randIdx = Math.floor(Math.random() * numMatchingKeys);
+            queries[i] = matchingKeys[randIdx];
+        }
+    } else {
+        const fallbackTarget = Number(targetNumericKey) || 0;
+        for (let i = 0; i < searchOps; i++) {
+            queries[i] = fallbackTarget;
+        }
     }
 
     // Pre-partition batch slices
