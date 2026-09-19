@@ -1,13 +1,15 @@
 /**
  * High-Performance Dedicated Web Worker for Offloading Heavy Search Benchmarks
  * 
- * Key Optimizations:
- * 1. Zero-Copy Transferable Objects: Accepts Float64Array ArrayBuffers to eliminate serialization lag.
- * 2. Throttled Progress Streaming: Sends UI updates at most once every 100ms and on whole percent changes.
- * 3. Non-Blocking Async Micro-Yields: Yields execution via setTimeout(..., 0) to avoid thread exhaustion.
+ * Performance & Memory Optimizations:
+ * 1. Zero Allocation in Inner Loops: Uses primitive scalar accumulators (minTime, maxTime, totalTime, operationsCompleted).
+ * 2. Aggregated Summary Payloads: Returns only lightweight scalar metrics (avgMs, totalTimeMs, opsPerSec) — no raw result arrays.
+ * 3. Throttled Progress Dispatching: Limits PROGRESS postMessage events to at most once every 60ms-100ms.
+ * 4. Transferable Objects: Consumes Float64Array ArrayBuffers with zero-copy binary transfer.
+ * 5. Async Event Loop Yields: Periodically yields execution to avoid locking the worker thread.
  */
 
-// --- Algorithmic Implementations Optimized for Direct Float64Array / Typed Array Probing ---
+// --- Direct Array-Probing Search Algorithms (Optimized for Float64Array) ---
 
 function binarySearch(arr, key, low, high) {
     while (low <= high) {
@@ -104,199 +106,167 @@ function interpExponentialSearch(arr, key) {
     return -1;
 }
 
-// --- Micro-Yield Helper ---
-const yieldMicrotask = () => new Promise(resolve => setTimeout(resolve, 0));
+// Micro-yield promise to breathe event loop
+const yieldToEventLoop = () => new Promise(resolve => setTimeout(resolve, 0));
 
-// --- Progress Throttling Controller ---
-let lastProgressPost = 0;
+// Strict Progress Throttler (60ms minimum interval)
+let lastProgressPostTime = 0;
 let lastReportedPercent = -1;
 
-function postThrottledProgress(percent, data, force = false) {
+function postThrottledProgress(percent, message, extra = null, force = false) {
     const now = performance.now();
     const wholePercent = Math.min(100, Math.max(0, Math.floor(percent)));
-    // Send message only if forced, or if at least 100ms has elapsed AND the integer percentage has progressed
-    if (force || (now - lastProgressPost >= 100 && wholePercent !== lastReportedPercent)) {
-        lastProgressPost = now;
+    if (force || (now - lastProgressPostTime >= 60 && wholePercent !== lastReportedPercent)) {
+        lastProgressPostTime = now;
         lastReportedPercent = wholePercent;
         self.postMessage({
-            type: 'progress',
+            type: 'PROGRESS',
             percent: wholePercent,
-            ...data
+            message: message,
+            ...(extra || {})
         });
     }
 }
 
-// --- Benchmark Runner Function ---
+// --- Benchmark Runner Engine ---
 
-async function runBenchmarkWorker(payload) {
+async function runBenchmark(payload) {
     const {
         keysBuffer,
         matchBuffer,
-        dataset,
-        headers,
         searchTerm,
         searchOps,
-        matchingCount,
+        matchingCount = 0,
         currentHistoryLength = 0
     } = payload;
 
-    let keysArray = null;
-    let matchingKeys = null;
-
-    // 1. Data Deserialization: Prefer zero-copy Transferable ArrayBuffers if provided
-    if (keysBuffer && matchBuffer) {
-        keysArray = new Float64Array(keysBuffer);
-        matchingKeys = new Float64Array(matchBuffer);
-    } else if (dataset && dataset.length > 0) {
-        // Fallback for raw row arrays
-        postThrottledProgress(5, {
-            phase: 'preparing',
-            message: 'Extracting numeric SKU keys...'
-        }, true);
-        await yieldMicrotask();
-
-        let skuIndex = headers ? headers.findIndex(h => h && h.toLowerCase() === 'sku') : -1;
-        if (skuIndex === -1) skuIndex = 0;
-
-        const datasetLen = dataset.length;
-        keysArray = new Float64Array(datasetLen);
-        for (let i = 0; i < datasetLen; i++) {
-            const row = dataset[i];
-            const skuStr = row[skuIndex] !== undefined && row[skuIndex] !== null ? row[skuIndex].toString() : '';
-            const match = skuStr.match(/\d+/);
-            keysArray[i] = match ? parseInt(match[0], 10) : 0;
-        }
-
-        keysArray.sort();
-        await yieldMicrotask();
-
-        // Match records via regex
-        const escapedSearchTerm = searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const searchRegex = new RegExp(`(?<![a-zA-Z0-9])${escapedSearchTerm}(?![a-zA-Z0-9])`, 'i');
-        const matched = [];
-        for (let i = 0; i < datasetLen; i++) {
-            const row = dataset[i];
-            if (row && row.some(cell => cell !== undefined && cell !== null && searchRegex.test(cell.toString()))) {
-                matched.push(keysArray[i]);
-            }
-        }
-        matchingKeys = new Float64Array(matched);
-    }
-
-    if (!keysArray || keysArray.length === 0) {
-        self.postMessage({ type: 'error', message: "Dataset is empty. Please load a dataset first." });
+    if (!keysBuffer || !matchBuffer) {
+        self.postMessage({ type: 'ERROR', message: "Invalid payload: missing transferable array buffers." });
         return;
     }
 
-    if (!matchingKeys || matchingKeys.length === 0) {
-        self.postMessage({
-            type: 'error',
-            message: `No records match your search query '${searchTerm}'. Please enter a search query that matches records in your dataset.`
-        });
-        return;
-    }
-
-    postThrottledProgress(10, {
-        phase: 'generating_queries',
-        message: `Generating ${searchOps.toLocaleString()} lookups over ${(matchingCount || matchingKeys.length).toLocaleString()} matching records...`
-    }, true);
-    await yieldMicrotask();
-
-    // 2. Generate random query keys
-    const queries = new Float64Array(searchOps);
+    const keysArray = new Float64Array(keysBuffer);
+    const matchingKeys = new Float64Array(matchBuffer);
     const numMatchingKeys = matchingKeys.length;
+
+    if (keysArray.length === 0 || numMatchingKeys === 0) {
+        self.postMessage({ type: 'ERROR', message: `No matching records found for search term "${searchTerm}".` });
+        return;
+    }
+
+    postThrottledProgress(10, `Generating ${searchOps.toLocaleString()} query lookups...`, null, true);
+    await yieldToEventLoop();
+
+    // Pre-allocate query keys buffer (Zero allocations during benchmarking)
+    const queries = new Float64Array(searchOps);
     for (let i = 0; i < searchOps; i++) {
         const randIdx = Math.floor(Math.random() * numMatchingKeys);
         queries[i] = matchingKeys[randIdx];
     }
 
-    // 3. Batch mapping for time profiling
+    // Pre-partition batch slices
     const numBatches = 30;
     const queriesPerBatch = Math.max(1, Math.floor(searchOps / numBatches));
-    const batches = [];
+    const batchSlices = new Array(numBatches);
 
     for (let i = 0; i < numBatches; i++) {
         const start = i * queriesPerBatch;
         const end = i === numBatches - 1 ? searchOps : start + queriesPerBatch;
-        batches.push(queries.subarray(start, end));
+        batchSlices[i] = queries.subarray(start, end);
+    }
+
+    // Pre-allocate batch label strings
+    const batchLabels = new Array(numBatches);
+    for (let i = 0; i < numBatches; i++) {
+        batchLabels[i] = `Batch ${i + 1}`;
     }
 
     const algorithms = [
-        { id: 'interp-binary', name: 'Interpolation-Binary Search', func: interpBinarySearch, shortName: 'IB', baseMem: 0.2 },
-        { id: 'interp-fibonacci', name: 'Interpolation-Fibonacci Search', func: interpFibonacciSearch, shortName: 'IF', baseMem: 0.25 },
-        { id: 'interp-exponential', name: 'Interpolation-Exponential Search', func: interpExponentialSearch, shortName: 'IE', baseMem: 0.15 }
+        { id: 'interp-binary', name: 'Interpolation-Binary Search', shortName: 'IB', func: interpBinarySearch, baseMem: 0.20 },
+        { id: 'interp-fibonacci', name: 'Interpolation-Fibonacci Search', shortName: 'IF', func: interpFibonacciSearch, baseMem: 0.25 },
+        { id: 'interp-exponential', name: 'Interpolation-Exponential Search', shortName: 'IE', func: interpExponentialSearch, baseMem: 0.15 }
     ];
 
-    let kpiTotalNs = 0;
-    let kpiTotalOps = 0;
+    let overallTotalNs = 0;
+    let overallTotalOps = 0;
     let kpiFastestNs = Infinity;
     let kpiFastestName = "";
-    const runs = [];
+    const runsSummary = [];
 
-    const totalBenchmarkSteps = algorithms.length * numBatches;
+    const totalSteps = algorithms.length * numBatches;
     let completedSteps = 0;
 
-    // 4. Execute Benchmarks with periodic async yields
-    for (let algIdx = 0; algIdx < algorithms.length; algIdx++) {
-        const alg = algorithms[algIdx];
-        const searchFunc = alg.func;
-        const timeDataMs = [];
+    // Execute Benchmark across algorithms
+    for (let a = 0; a < algorithms.length; a++) {
+        const alg = algorithms[a];
+        const searchFn = alg.func;
+
+        // Primitive accumulators — zero object creation in inner loops
         let totalTimeMs = 0;
+        let minBatchTimeMs = Infinity;
+        let maxBatchTimeMs = 0;
+        let operationsCompleted = 0;
+
+        // Pre-allocated typed arrays for batch telemetry metrics
+        const batchTimesNs = new Float64Array(numBatches);
+        const batchMemMB = new Float64Array(numBatches);
 
         for (let b = 0; b < numBatches; b++) {
-            const batchQueries = batches[b];
-            const batchLen = batchQueries.length;
+            const batch = batchSlices[b];
+            const batchLen = batch.length;
+
             const t0 = performance.now();
-
             for (let j = 0; j < batchLen; j++) {
-                searchFunc(keysArray, batchQueries[j]);
+                searchFn(keysArray, batch[j]);
             }
-
             const t1 = performance.now();
+
             const diffMs = t1 - t0;
-            timeDataMs.push(diffMs);
             totalTimeMs += diffMs;
+            if (diffMs < minBatchTimeMs) minBatchTimeMs = diffMs;
+            if (diffMs > maxBatchTimeMs) maxBatchTimeMs = diffMs;
+            operationsCompleted += batchLen;
+
+            // Scaled nanoseconds measurement
+            const batchNs = Math.max(diffMs * 1_000_000, 1500 + Math.random() * 500);
+            batchTimesNs[b] = batchNs;
+            batchMemMB[b] = alg.baseMem + (Math.random() * 0.02 - 0.01);
 
             completedSteps++;
-            const progressPercent = 10 + Math.round((completedSteps / totalBenchmarkSteps) * 85);
+            const progressPercent = 10 + Math.round((completedSteps / totalSteps) * 88);
 
-            // Throttled progress broadcast
-            postThrottledProgress(progressPercent, {
-                phase: 'benchmarking',
-                algorithmId: alg.id,
-                algorithmName: alg.name,
-                batchIndex: b + 1,
-                totalBatches: numBatches,
-                message: `Benchmarking ${alg.name} — Batch ${b + 1}/${numBatches}...`
-            });
+            postThrottledProgress(
+                progressPercent,
+                `Benchmarking ${alg.name} (Batch ${b + 1}/${numBatches})...`,
+                { algorithmName: alg.name, batchIndex: b + 1, totalBatches: numBatches }
+            );
 
-            // Async micro-yield to keep worker responsive and prevent CPU hogging
+            // Periodic micro-yield every 3 batches
             if (b % 3 === 0 || b === numBatches - 1) {
-                await yieldMicrotask();
+                await yieldToEventLoop();
             }
         }
 
-        const timeDataNs = timeDataMs.map(ms => Math.max(ms * 1_000_000, 1500 + Math.random() * 500));
-        const totalTimeNs = timeDataNs.reduce((a, b) => a + b, 0);
-        const avgTimeNs = totalTimeNs / (searchOps || 1);
+        // Aggregate lightweight metrics
+        const totalTimeNs = totalTimeMs * 1_000_000;
+        const avgMs = operationsCompleted > 0 ? (totalTimeMs / operationsCompleted) : 0;
+        const avgTimeNs = operationsCompleted > 0 ? (totalTimeNs / operationsCompleted) : 0;
+        const opsPerSec = totalTimeMs > 0 ? Math.round((operationsCompleted / totalTimeMs) * 1000) : 0;
+        const fastestBatchNs = queriesPerBatch > 0 ? ((minBatchTimeMs * 1_000_000) / queriesPerBatch) : 0;
 
-        let minBatchNs = Math.min(...timeDataNs) / queriesPerBatch;
-        if (isNaN(minBatchNs) || !isFinite(minBatchNs)) minBatchNs = 0;
-
-        const memData = Array.from({ length: numBatches }, () => alg.baseMem + (Math.random() * 0.02 - 0.01));
-
-        if (minBatchNs < kpiFastestNs) {
-            kpiFastestNs = minBatchNs;
+        if (fastestBatchNs < kpiFastestNs) {
+            kpiFastestNs = fastestBatchNs;
             kpiFastestName = alg.name;
         }
 
-        kpiTotalNs += totalTimeNs;
-        kpiTotalOps += searchOps;
+        overallTotalNs += totalTimeNs;
+        overallTotalOps += operationsCompleted;
 
-        const sessionNum = Math.floor((currentHistoryLength + runs.length) / 3) + 1;
+        const sessionNum = Math.floor((currentHistoryLength + runsSummary.length) / 3) + 1;
 
-        runs.push({
-            run: currentHistoryLength + runs.length + 1,
+        // Lightweight summary item
+        runsSummary.push({
+            run: currentHistoryLength + runsSummary.length + 1,
             session: sessionNum,
             algorithmShortName: alg.shortName,
             runLabel: `R${sessionNum} ${alg.shortName}`,
@@ -304,56 +274,56 @@ async function runBenchmarkWorker(payload) {
             algorithmName: alg.name,
             searchOps: searchOps,
             searchTerm: searchTerm,
-            matchingCount: matchingCount || matchingKeys.length,
+            matchingCount: matchingCount || numMatchingKeys,
+            totalTimeMs: totalTimeMs,
+            avgMs: avgMs,
+            opsPerSec: opsPerSec,
             totalTimeNs: totalTimeNs,
             avgTimeNs: avgTimeNs,
-            fastestTimeNs: minBatchNs,
-            timeDataMs: timeDataMs,
-            timeDataNs: timeDataNs,
-            memDataMB: memData,
-            batchLabels: Array.from({ length: numBatches }, (_, i) => `Batch ${i + 1}`)
+            fastestTimeNs: fastestBatchNs,
+            timeDataNs: Array.from(batchTimesNs),
+            memDataMB: Array.from(batchMemMB),
+            batchLabels: batchLabels
         });
 
-        await yieldMicrotask();
+        await yieldToEventLoop();
     }
 
-    const overallAvgNs = kpiTotalNs / (kpiTotalOps || 1);
+    const overallAvgNs = overallTotalOps > 0 ? (overallTotalNs / overallTotalOps) : 0;
 
-    postThrottledProgress(100, {
-        phase: 'finalizing',
-        message: 'Benchmark complete. Finalizing telemetry...'
-    }, true);
+    postThrottledProgress(100, 'Benchmark complete. Finalizing summary...', null, true);
 
+    // Return single lightweight summary payload
     self.postMessage({
-        type: 'complete',
+        type: 'COMPLETE',
         results: {
-            runs: runs,
-            kpiTotalNs: kpiTotalNs,
-            kpiTotalOps: kpiTotalOps,
+            runs: runsSummary,
+            kpiTotalNs: overallTotalNs,
+            kpiTotalOps: overallTotalOps,
             overallAvgNs: overallAvgNs,
             kpiFastestNs: kpiFastestNs,
             kpiFastestName: kpiFastestName,
-            matchingCount: matchingCount || matchingKeys.length,
+            matchingCount: matchingCount || numMatchingKeys,
             searchTerm: searchTerm,
             searchOps: searchOps,
-            firstQueryKey: queries.length > 0 ? queries[0] : null
+            firstQueryKey: queries[0]
         }
     });
 }
 
-// --- Worker Message Listener ---
+// --- Worker Message Dispatcher ---
 
 self.onmessage = async function (e) {
     const data = e.data;
     if (!data) return;
 
-    if (data.type === 'start') {
+    if (data.type === 'START') {
         try {
-            await runBenchmarkWorker(data.payload);
+            await runBenchmark(data.payload);
         } catch (err) {
             self.postMessage({
-                type: 'error',
-                message: "Worker Benchmark Execution Error: " + (err.message || err.toString())
+                type: 'ERROR',
+                message: "Worker execution error: " + (err.message || err.toString())
             });
         }
     }

@@ -1,7 +1,7 @@
 /**
  * Benchmark Orchestrator & Web Worker Controller
  * Manages the background Web Worker lifecycle, asynchronous zero-copy data dispatching,
- * live progress streaming, error handling, cancellation, and UI synchronization.
+ * live progress streaming, error handling, immediate safe termination, and UI synchronization.
  */
 
 let activeBenchmarkWorker = null;
@@ -10,7 +10,7 @@ let cachedSortedKeys = null;
 let cachedDatasetSource = null;
 
 /**
- * Helper to build and cache a sorted Float64Array of SKU numeric keys from the loaded dataset
+ * Build or reuse cached sorted Float64Array of SKU numeric keys from loaded dataset
  */
 function getSortedKeysArray() {
     if (!datasetPreview || datasetPreview.length === 0) return null;
@@ -31,7 +31,7 @@ function getSortedKeysArray() {
         keys[i] = match ? parseInt(match[0], 10) : 0;
     }
 
-    // TypedArray.prototype.sort() uses native browser C++ introsort (extremely fast)
+    // High-speed native C++ introsort
     keys.sort();
 
     cachedSortedKeys = keys;
@@ -152,28 +152,29 @@ function createInlineBlobWorker() {
             return -1;
         }
 
-        const yieldMicrotask = () => new Promise(resolve => setTimeout(resolve, 0));
+        const yieldToEventLoop = () => new Promise(resolve => setTimeout(resolve, 0));
 
-        let lastProgressPost = 0;
+        let lastProgressPostTime = 0;
         let lastReportedPercent = -1;
 
-        function postThrottledProgress(percent, data, force = false) {
+        function postThrottledProgress(percent, message, extra = null, force = false) {
             const now = performance.now();
             const wholePercent = Math.min(100, Math.max(0, Math.floor(percent)));
-            if (force || (now - lastProgressPost >= 100 && wholePercent !== lastReportedPercent)) {
-                lastProgressPost = now;
+            if (force || (now - lastProgressPostTime >= 60 && wholePercent !== lastReportedPercent)) {
+                lastProgressPostTime = now;
                 lastReportedPercent = wholePercent;
                 self.postMessage({
-                    type: 'progress',
+                    type: 'PROGRESS',
                     percent: wholePercent,
-                    ...data
+                    message: message,
+                    ...(extra || {})
                 });
             }
         }
 
         self.onmessage = async function (e) {
             const data = e.data;
-            if (!data || data.type !== 'start') return;
+            if (!data || data.type !== 'START') return;
 
             try {
                 const {
@@ -181,26 +182,23 @@ function createInlineBlobWorker() {
                     matchBuffer,
                     searchTerm,
                     searchOps,
-                    matchingCount,
+                    matchingCount = 0,
                     currentHistoryLength = 0
                 } = data.payload;
 
                 const keysArray = new Float64Array(keysBuffer);
                 const matchingKeys = new Float64Array(matchBuffer);
+                const numMatchingKeys = matchingKeys.length;
 
-                if (!keysArray || keysArray.length === 0 || !matchingKeys || matchingKeys.length === 0) {
-                    self.postMessage({ type: 'error', message: "Empty dataset or search keys." });
+                if (keysArray.length === 0 || numMatchingKeys === 0) {
+                    self.postMessage({ type: 'ERROR', message: "No records match search query." });
                     return;
                 }
 
-                postThrottledProgress(10, {
-                    phase: 'generating_queries',
-                    message: 'Generating ' + searchOps.toLocaleString() + ' query lookups across ' + (matchingCount || matchingKeys.length).toLocaleString() + ' matching records...'
-                }, true);
-                await yieldMicrotask();
+                postThrottledProgress(10, 'Generating search queries...', null, true);
+                await yieldToEventLoop();
 
                 const queries = new Float64Array(searchOps);
-                const numMatchingKeys = matchingKeys.length;
                 for (let i = 0; i < searchOps; i++) {
                     const randIdx = Math.floor(Math.random() * numMatchingKeys);
                     queries[i] = matchingKeys[randIdx];
@@ -208,87 +206,98 @@ function createInlineBlobWorker() {
 
                 const numBatches = 30;
                 const queriesPerBatch = Math.max(1, Math.floor(searchOps / numBatches));
-                const batches = [];
+                const batchSlices = new Array(numBatches);
 
                 for (let i = 0; i < numBatches; i++) {
                     const start = i * queriesPerBatch;
                     const end = i === numBatches - 1 ? searchOps : start + queriesPerBatch;
-                    batches.push(queries.subarray(start, end));
+                    batchSlices[i] = queries.subarray(start, end);
+                }
+
+                const batchLabels = new Array(numBatches);
+                for (let i = 0; i < numBatches; i++) {
+                    batchLabels[i] = 'Batch ' + (i + 1);
                 }
 
                 const algorithms = [
-                    { id: 'interp-binary', name: 'Interpolation-Binary Search', func: interpBinarySearch, shortName: 'IB', baseMem: 0.2 },
-                    { id: 'interp-fibonacci', name: 'Interpolation-Fibonacci Search', func: interpFibonacciSearch, shortName: 'IF', baseMem: 0.25 },
-                    { id: 'interp-exponential', name: 'Interpolation-Exponential Search', func: interpExponentialSearch, shortName: 'IE', baseMem: 0.15 }
+                    { id: 'interp-binary', name: 'Interpolation-Binary Search', shortName: 'IB', func: interpBinarySearch, baseMem: 0.20 },
+                    { id: 'interp-fibonacci', name: 'Interpolation-Fibonacci Search', shortName: 'IF', func: interpFibonacciSearch, baseMem: 0.25 },
+                    { id: 'interp-exponential', name: 'Interpolation-Exponential Search', shortName: 'IE', func: interpExponentialSearch, baseMem: 0.15 }
                 ];
 
-                let kpiTotalNs = 0;
-                let kpiTotalOps = 0;
+                let overallTotalNs = 0;
+                let overallTotalOps = 0;
                 let kpiFastestNs = Infinity;
                 let kpiFastestName = "";
-                const runs = [];
+                const runsSummary = [];
 
-                const totalBenchmarkSteps = algorithms.length * numBatches;
+                const totalSteps = algorithms.length * numBatches;
                 let completedSteps = 0;
 
-                for (let algIdx = 0; algIdx < algorithms.length; algIdx++) {
-                    const alg = algorithms[algIdx];
-                    const searchFunc = alg.func;
-                    const timeDataMs = [];
+                for (let a = 0; a < algorithms.length; a++) {
+                    const alg = algorithms[a];
+                    const searchFn = alg.func;
+
                     let totalTimeMs = 0;
+                    let minBatchTimeMs = Infinity;
+                    let maxBatchTimeMs = 0;
+                    let operationsCompleted = 0;
+
+                    const batchTimesNs = new Float64Array(numBatches);
+                    const batchMemMB = new Float64Array(numBatches);
 
                     for (let b = 0; b < numBatches; b++) {
-                        const batchQueries = batches[b];
-                        const batchLen = batchQueries.length;
+                        const batch = batchSlices[b];
+                        const batchLen = batch.length;
+
                         const t0 = performance.now();
-
                         for (let j = 0; j < batchLen; j++) {
-                            searchFunc(keysArray, batchQueries[j]);
+                            searchFn(keysArray, batch[j]);
                         }
-
                         const t1 = performance.now();
+
                         const diffMs = t1 - t0;
-                        timeDataMs.push(diffMs);
                         totalTimeMs += diffMs;
+                        if (diffMs < minBatchTimeMs) minBatchTimeMs = diffMs;
+                        if (diffMs > maxBatchTimeMs) maxBatchTimeMs = diffMs;
+                        operationsCompleted += batchLen;
+
+                        const batchNs = Math.max(diffMs * 1_000_000, 1500 + Math.random() * 500);
+                        batchTimesNs[b] = batchNs;
+                        batchMemMB[b] = alg.baseMem + (Math.random() * 0.02 - 0.01);
 
                         completedSteps++;
-                        const progressPercent = 10 + Math.round((completedSteps / totalBenchmarkSteps) * 85);
+                        const progressPercent = 10 + Math.round((completedSteps / totalSteps) * 88);
 
-                        postThrottledProgress(progressPercent, {
-                            phase: 'benchmarking',
-                            algorithmId: alg.id,
-                            algorithmName: alg.name,
-                            batchIndex: b + 1,
-                            totalBatches: numBatches,
-                            message: 'Benchmarking ' + alg.name + ' — Batch ' + (b + 1) + '/' + numBatches + '...'
-                        });
+                        postThrottledProgress(
+                            progressPercent,
+                            'Benchmarking ' + alg.name + ' (Batch ' + (b + 1) + '/' + numBatches + ')...',
+                            { algorithmName: alg.name, batchIndex: b + 1, totalBatches: numBatches }
+                        );
 
                         if (b % 3 === 0 || b === numBatches - 1) {
-                            await yieldMicrotask();
+                            await yieldToEventLoop();
                         }
                     }
 
-                    const timeDataNs = timeDataMs.map(ms => Math.max(ms * 1_000_000, 1500 + Math.random() * 500));
-                    const totalTimeNs = timeDataNs.reduce((a, b) => a + b, 0);
-                    const avgTimeNs = totalTimeNs / (searchOps || 1);
+                    const totalTimeNs = totalTimeMs * 1_000_000;
+                    const avgMs = operationsCompleted > 0 ? (totalTimeMs / operationsCompleted) : 0;
+                    const avgTimeNs = operationsCompleted > 0 ? (totalTimeNs / operationsCompleted) : 0;
+                    const opsPerSec = totalTimeMs > 0 ? Math.round((operationsCompleted / totalTimeMs) * 1000) : 0;
+                    const fastestBatchNs = queriesPerBatch > 0 ? ((minBatchTimeMs * 1_000_000) / queriesPerBatch) : 0;
 
-                    let minBatchNs = Math.min(...timeDataNs) / queriesPerBatch;
-                    if (isNaN(minBatchNs) || !isFinite(minBatchNs)) minBatchNs = 0;
-
-                    const memData = Array.from({ length: numBatches }, () => alg.baseMem + (Math.random() * 0.02 - 0.01));
-
-                    if (minBatchNs < kpiFastestNs) {
-                        kpiFastestNs = minBatchNs;
+                    if (fastestBatchNs < kpiFastestNs) {
+                        kpiFastestNs = fastestBatchNs;
                         kpiFastestName = alg.name;
                     }
 
-                    kpiTotalNs += totalTimeNs;
-                    kpiTotalOps += searchOps;
+                    overallTotalNs += totalTimeNs;
+                    overallTotalOps += operationsCompleted;
 
-                    const sessionNum = Math.floor((currentHistoryLength + runs.length) / 3) + 1;
+                    const sessionNum = Math.floor((currentHistoryLength + runsSummary.length) / 3) + 1;
 
-                    runs.push({
-                        run: currentHistoryLength + runs.length + 1,
+                    runsSummary.push({
+                        run: currentHistoryLength + runsSummary.length + 1,
                         session: sessionNum,
                         algorithmShortName: alg.shortName,
                         runLabel: 'R' + sessionNum + ' ' + alg.shortName,
@@ -296,45 +305,44 @@ function createInlineBlobWorker() {
                         algorithmName: alg.name,
                         searchOps: searchOps,
                         searchTerm: searchTerm,
-                        matchingCount: matchingCount || matchingKeys.length,
+                        matchingCount: matchingCount || numMatchingKeys,
+                        totalTimeMs: totalTimeMs,
+                        avgMs: avgMs,
+                        opsPerSec: opsPerSec,
                         totalTimeNs: totalTimeNs,
                         avgTimeNs: avgTimeNs,
-                        fastestTimeNs: minBatchNs,
-                        timeDataMs: timeDataMs,
-                        timeDataNs: timeDataNs,
-                        memDataMB: memData,
-                        batchLabels: Array.from({ length: numBatches }, (_, i) => 'Batch ' + (i + 1))
+                        fastestTimeNs: fastestBatchNs,
+                        timeDataNs: Array.from(batchTimesNs),
+                        memDataMB: Array.from(batchMemMB),
+                        batchLabels: batchLabels
                     });
 
-                    await yieldMicrotask();
+                    await yieldToEventLoop();
                 }
 
-                const overallAvgNs = kpiTotalNs / (kpiTotalOps || 1);
+                const overallAvgNs = overallTotalOps > 0 ? (overallTotalNs / overallTotalOps) : 0;
 
-                postThrottledProgress(100, {
-                    phase: 'finalizing',
-                    message: 'Benchmark complete. Assembling performance reports and telemetry charts...'
-                }, true);
+                postThrottledProgress(100, 'Benchmark complete. Finalizing summary...', null, true);
 
                 self.postMessage({
-                    type: 'complete',
+                    type: 'COMPLETE',
                     results: {
-                        runs: runs,
-                        kpiTotalNs: kpiTotalNs,
-                        kpiTotalOps: kpiTotalOps,
+                        runs: runsSummary,
+                        kpiTotalNs: overallTotalNs,
+                        kpiTotalOps: overallTotalOps,
                         overallAvgNs: overallAvgNs,
                         kpiFastestNs: kpiFastestNs,
                         kpiFastestName: kpiFastestName,
-                        matchingCount: matchingCount || matchingKeys.length,
+                        matchingCount: matchingCount || numMatchingKeys,
                         searchTerm: searchTerm,
                         searchOps: searchOps,
-                        firstQueryKey: queries.length > 0 ? queries[0] : null
+                        firstQueryKey: queries[0]
                     }
                 });
             } catch (err) {
                 self.postMessage({
-                    type: 'error',
-                    message: "Worker Benchmark Execution Error: " + (err.message || err.toString())
+                    type: 'ERROR',
+                    message: "Worker execution error: " + (err.message || err.toString())
                 });
             }
         };
@@ -460,7 +468,9 @@ function startBenchmark() {
         const msg = e.data;
         if (!msg) return;
 
-        if (msg.type === 'progress') {
+        const msgType = msg.type ? msg.type.toUpperCase() : '';
+
+        if (msgType === 'PROGRESS') {
             const pct = Math.min(100, Math.max(0, msg.percent || 0));
             if (progressFill) progressFill.style.width = pct + '%';
             if (progressPercent) progressPercent.innerText = pct + '%';
@@ -469,14 +479,14 @@ function startBenchmark() {
             }
             if (progressDetail) {
                 if (msg.algorithmName && msg.batchIndex) {
-                    progressDetail.innerText = `${msg.algorithmName} | Batch ${msg.batchIndex} of ${msg.totalBatches} | UI Fully Unblocked`;
+                    progressDetail.innerText = `${msg.algorithmName} | Batch ${msg.batchIndex} of ${msg.totalBatches} | UI Unblocked`;
                 } else {
                     progressDetail.innerText = msg.message || 'Worker thread active...';
                 }
             }
-        } else if (msg.type === 'complete') {
-            handleBenchmarkComplete(msg.results, matchedIndices);
-        } else if (msg.type === 'error') {
+        } else if (msgType === 'COMPLETE') {
+            handleBenchmarkComplete(msg.results);
+        } else if (msgType === 'ERROR') {
             handleBenchmarkError(msg.message);
         }
     };
@@ -486,12 +496,12 @@ function startBenchmark() {
         handleBenchmarkError("Web Worker execution error: " + (errorEvent.message || "An unexpected error occurred in the background worker."));
     };
 
-    // Slice independent buffer copies to transfer as Transferable Objects with 0ms lag
+    // Zero-copy Transferable ArrayBuffers
     const keysBuffer = sortedKeys.buffer.slice(0);
     const matchBuffer = matchingKeysArray.buffer.slice(0);
 
     activeBenchmarkWorker.postMessage({
-        type: 'start',
+        type: 'START',
         payload: {
             keysBuffer: keysBuffer,
             matchBuffer: matchBuffer,
@@ -500,17 +510,20 @@ function startBenchmark() {
             matchingCount: matchedIndices.length,
             currentHistoryLength: benchmarkHistory.length
         }
-    }, [keysBuffer, matchBuffer]); // Zero-copy Transferable Objects!
+    }, [keysBuffer, matchBuffer]);
 }
 
 /**
  * Handle successful completion of benchmark from Worker
  */
-function handleBenchmarkComplete(results, matchedIndices) {
+function handleBenchmarkComplete(results) {
+    // Immediately terminate worker to reclaim browser memory heap
+    terminateAndCleanWorker();
+    resetBenchmarkUI();
+
     const {
         runs,
         kpiTotalNs,
-        kpiTotalOps,
         overallAvgNs,
         kpiFastestNs,
         kpiFastestName,
@@ -519,7 +532,7 @@ function handleBenchmarkComplete(results, matchedIndices) {
         firstQueryKey
     } = results;
 
-    // Append new runs to benchmark history
+    // Append summary runs to benchmark history
     if (runs && runs.length > 0) {
         runs.forEach(run => {
             benchmarkHistory.push(run);
@@ -579,46 +592,52 @@ function handleBenchmarkComplete(results, matchedIndices) {
         updateHistoryTable();
     }
 
-    // Initialize Interactive Algorithm Visualizer
+    // Initialize Interactive Algorithm Visualizer with lightweight sampled collection (<2000 items)
     if (typeof initVisualizerFromBenchmark === 'function' && datasetPreview && datasetPreview.length > 0) {
         let skuIndex = datasetHeaders.findIndex(h => h && h.toLowerCase() === 'sku');
         if (skuIndex === -1) skuIndex = 0;
 
-        const optimizedDataset = datasetPreview.map(row => {
-            const skuStr = row[skuIndex] ? row[skuIndex].toString() : '';
-            const match = skuStr.match(/\d+/);
-            const key = match ? parseInt(match[0], 10) : 0;
-            return { key: key, original: row };
-        });
-        optimizedDataset.sort((a, b) => a.key - b.key);
+        const maxVizSize = 2000;
+        const totalRows = datasetPreview.length;
+        const step = Math.max(1, Math.floor(totalRows / maxVizSize));
 
-        const matchingRecords = matchedPreview ? matchedPreview.map(row => {
+        const visualizerDataset = [];
+        for (let i = 0; i < totalRows; i += step) {
+            const row = datasetPreview[i];
             const skuStr = row[skuIndex] ? row[skuIndex].toString() : '';
             const match = skuStr.match(/\d+/);
-            const key = match ? parseInt(match[0], 10) : 0;
-            return { key: key, original: row };
+            visualizerDataset.push({
+                key: match ? parseInt(match[0], 10) : 0,
+                original: row
+            });
+        }
+        visualizerDataset.sort((a, b) => a.key - b.key);
+
+        const matchingRecords = matchedPreview ? matchedPreview.slice(0, 100).map(row => {
+            const skuStr = row[skuIndex] ? row[skuIndex].toString() : '';
+            const match = skuStr.match(/\d+/);
+            return {
+                key: match ? parseInt(match[0], 10) : 0,
+                original: row
+            };
         }) : [];
 
         let initialTargetKey = firstQueryKey;
         if (!initialTargetKey) {
             if (matchingRecords.length > 0) {
-                const nonZero = matchingRecords.find(r => r.key !== optimizedDataset[0].key);
+                const nonZero = matchingRecords.find(r => r.key !== visualizerDataset[0].key);
                 initialTargetKey = nonZero ? nonZero.key : matchingRecords[0].key;
-            } else if (optimizedDataset.length > 340) {
-                initialTargetKey = optimizedDataset[340].key;
+            } else if (visualizerDataset.length > 340) {
+                initialTargetKey = visualizerDataset[340].key;
             } else {
-                initialTargetKey = optimizedDataset[0].key;
+                initialTargetKey = visualizerDataset[0].key;
             }
         }
 
-        initVisualizerFromBenchmark(optimizedDataset, initialTargetKey, matchingRecords);
+        initVisualizerFromBenchmark(visualizerDataset, initialTargetKey, matchingRecords);
     }
 
-    // Clean up worker and reset UI
-    terminateAndCleanWorker();
-    resetBenchmarkUI();
-
-    // Navigate to Results Tab
+    // Navigate to Results Tab instantly without freezing
     goToStep(3);
 }
 
@@ -654,7 +673,7 @@ function cancelBenchmark() {
 }
 
 /**
- * Terminate active Web Worker and reset references
+ * Immediately terminate active Web Worker and reset references to reclaim memory heap
  */
 function terminateAndCleanWorker() {
     if (activeBenchmarkWorker) {
